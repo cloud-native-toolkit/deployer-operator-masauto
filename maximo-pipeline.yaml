@@ -1,0 +1,97 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openshift-client-sa
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: openshift-client-role
+rules:
+  # Core API
+  - apiGroups: [""]
+    resources: ["services", "pods", "deployments", "configmaps", "secrets"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  # Apps API
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets", "jobs"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  # Tekton API
+  - apiGroups: ["tekton.dev"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openshift-client-binding
+subjects:
+  - kind: ServiceAccount
+    name: openshift-client-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: openshift-client-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: mas-core-deploy
+spec:
+  serviceAccountName: openshift-client-sa
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+  params:
+    - name: entitlement-key
+  pipelineSpec:
+    workspaces:
+      - name: shared-workspace
+    tasks:
+      - name: add-entitlement-key
+        taskRef:
+          name: openshift-client
+        params:
+          - name: entitlement-key
+            value: $(params.entitlement-key)
+          - name: SCRIPT
+            value: | 
+              oc create secret generic "ibm-entitlement-key" \
+              -n masauto-operator-system --from-literal="username=cp" \
+              --from-literal="password=$(params.entitlement_key)IBM_ENTITLEMENT_KEY"
+      - name: add-catalog-source
+        taskRef:
+          name: helm-upgrade-from-repo
+        params:
+          - name: helm-repo
+            value: "https://github.com/cloud-native-toolkit/operator-masauto"
+          - name: chart_name
+            value: charts/ecosystem-engineering-catalog
+      - name: add-operator
+        taskRef:
+          name: helm-upgrade-from-repo
+        params:
+          - name: helm-repo
+            value: "https://github.com/cloud-native-toolkit/operator-masauto"
+          - name: chart_name
+            value: charts/masauto-operator
+      - name: add-mas-core
+        taskRef:
+          name: helm-upgrade-from-repo
+        params:
+          - name: helm-repo
+            value: "https://github.com/cloud-native-toolkit/operator-masauto"
+          - name: chart_name
+            value: charts/mas-core
+
+
+
+
