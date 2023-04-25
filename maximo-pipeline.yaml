@@ -11,12 +11,20 @@ metadata:
 rules:
   # Core API
   - apiGroups: [""]
-    resources: ["services", "pods", "deployments", "configmaps", "secrets"]
+    resources: ["services", "pods", "deployments", "configmaps", "secrets", "namespaces"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
   # Apps API
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets", "jobs"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  # operators
+  - apiGroups: ["operators.coreos.com"]
+    resources: ["catalogsources", "installplan", "clusterserviceversions", "subscriptions", "operatorgroups"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  # maximo permissions
+  - apiGroups: ["masauto.ibm.com"]
+    resources: ["*"]
+    verbs: ["*"]
   # Tekton API
   - apiGroups: ["tekton.dev"]
     resources: ["*"]
@@ -36,62 +44,166 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: tekton.dev/v1beta1
-kind: PipelineRun
+kind: Pipeline
 metadata:
   name: mas-core-deploy
 spec:
-  serviceAccountName: openshift-client-sa
   workspaces:
     - name: shared-workspace
-      volumeClaimTemplate:
-        spec:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 1Gi
   params:
-    - name: entitlement-key
-  pipelineSpec:
-    workspaces:
-      - name: shared-workspace
-    tasks:
-      - name: add-entitlement-key
-        taskRef:
-          name: openshift-client
-        params:
-          - name: entitlement-key
-            value: $(params.entitlement-key)
-          - name: SCRIPT
-            value: | 
-              oc create secret generic "ibm-entitlement-key" \
-              -n masauto-operator-system --from-literal="username=cp" \
-              --from-literal="password=$(params.entitlement_key)IBM_ENTITLEMENT_KEY"
-      - name: add-catalog-source
-        taskRef:
-          name: helm-upgrade-from-repo
-        params:
-          - name: helm-repo
-            value: "https://github.com/cloud-native-toolkit/operator-masauto"
-          - name: chart_name
-            value: charts/ecosystem-engineering-catalog
-      - name: add-operator
-        taskRef:
-          name: helm-upgrade-from-repo
-        params:
-          - name: helm-repo
-            value: "https://github.com/cloud-native-toolkit/operator-masauto"
-          - name: chart_name
-            value: charts/masauto-operator
-      - name: add-mas-core
-        taskRef:
-          name: helm-upgrade-from-repo
-        params:
-          - name: helm-repo
-            value: "https://github.com/cloud-native-toolkit/operator-masauto"
-          - name: chart_name
-            value: charts/mas-core
-
-
+    - name: namespace
+      type: string
+      default: "masauto-operator-system"
+    - name: operatorGroup
+      type: string
+      default: "masauto-operator-system-operator-group"
+    - name: ibm-entitlement-key
+      type: string
+      default: "none"
+  tasks:
+    - name: add-namespace
+      taskRef:
+        name: openshift-client
+      params:
+        - name: ARGS
+          value: [$(params.namespace)]
+        - name: VERSION
+          value: "4.10"
+        - name: SCRIPT
+          value: | 
+            oc apply -f - <<EOF 
+            kind: Namespace
+            apiVersion: v1
+            metadata:
+              name: $1
+            EOF
+    - name: add-operator-group
+      taskRef:
+        name: openshift-client
+      runAfter:
+        - add-namespace
+      params:
+        - name: ARGS
+          value: [$(params.namespace),$(params.operatorGroup)]
+        - name: VERSION
+          value: "4.10"
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            apiVersion: operators.coreos.com/v1
+            kind: OperatorGroup
+            metadata:
+              name: $2
+              namespace: $1
+            spec:
+              targetNamespaces:
+                - $1
+            EOF
+    - name: add-entitlement-key
+      taskRef:
+        name: openshift-client
+      runAfter:
+        - add-namespace
+      params:
+        - name: ARGS
+          value: [$(params.ibm-entitlement-key), $(params.namespace)]
+        - name: VERSION
+          value: "4.10"
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            kind: Secret
+            apiVersion: v1
+            metadata:
+              name: ibm-entitlement-key
+              namespace: $2
+            type: Opaque
+            stringData:
+              password: "$1"
+              username: "cp"
+            EOF
+    - name: fetch-repository
+      taskRef:
+        name: git-clone
+      workspaces:
+        - name: output
+          workspace: shared-workspace
+      params:
+        - name: url
+          value: "https://github.com/cloud-native-toolkit/operator-masauto"
+        - name: revision
+          value: "main"
+    - name: add-catalog-source
+      taskRef:
+        name: openshift-client
+      runAfter:
+        - add-entitlement-key
+      params:
+        - name: VERSION
+          value: "4.10"
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            apiVersion: operators.coreos.com/v1alpha1
+            kind: CatalogSource
+            metadata:
+              name: ecosystem-engineering-catalog
+              namespace: openshift-marketplace
+              labels:
+                app.kubernetes.io/name: ecosystem-engineering-catalog
+                app.kubernetes.io/instance: ecosystem-engineering-catalog
+                app.kubernetes.io/version: v0.16.0
+            spec:
+              displayName: ecosystem-engineering-catalog
+              publisher: IBM
+              sourceType: grpc
+              image: quay.io/cloudnativetoolkit/ecosysengineer-catalog:latest
+              updateStrategy:
+                registryPoll:
+                  interval: 90m
+            EOF
+    - name: add-operator
+      taskRef:
+        name: openshift-client
+      runAfter:
+        - add-catalog-source
+        - add-operator-group
+      params:
+        - name: ARGS
+          value: [$(params.namespace),$(params.operatorGroup)]
+        - name: VERSION
+          value: "4.10"
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            apiVersion: operators.coreos.com/v1alpha1
+            kind: Subscription
+            metadata:
+              name: masauto-operator
+              namespace: $1
+              labels:
+                app.kubernetes.io/name: masauto-operator
+                app.kubernetes.io/instance: masauto-operator
+                app.kubernetes.io/version: "1.16.0"
+            spec:
+              channel: alpha
+              installPlanApproval: Automatic
+              name: masauto-operator
+              source: ecosystem-engineering-catalog
+              sourceNamespace: openshift-marketplace
+            EOF
+    - name: add-mas-core
+      taskRef:
+        name: helm-upgrade-from-source
+      runAfter:
+        - add-operator
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: charts_dir
+          value: charts/mas-core
+        - name: values_file
+          value: ../values_mas_core.yaml
 
 
