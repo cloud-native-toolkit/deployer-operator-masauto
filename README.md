@@ -1,13 +1,24 @@
-# deployer-operator-masauto
-Tektoncd pipeline to deploy the Maximo Operator for IBM TechZone Deployer (experimental)
+# Techzone Deployer for the Maximo Operator
 
-## Prerequisites
+This repository contains a Tekton pipelines to deploy the [Maximo Operator](https://github.com/cloud-native-toolkit/operator-masauto) that packages [mas-ansible](https://ibm-mas.github.io/ansible-devops/).
 
-* Openshift Cluster with OpenShift Pipelines 1.8 installed
-* oc task installed from tekton hub
-* helm task installed from tekton hub
+## Pre-requisites
 
-./prereqs.sh
+An IBM Technology Zone `deployer` cluster is assumed to be configured with an appropriate Red Hat OpenShift version for the Maximo version you wish to deploy, with appropriate sizing. Refer to [Maximo Product Documentation](https://www.ibm.com/docs/en/mas-cd/continuous-delivery?topic=planning) for more information.
+
+A `deployer` cluster is configured with the following items:
+
+- ExternalSecrets operator deployed with a ClusterSecretStore configured. The remote ExternalSecrets secret store must include an IBM Entitlement Key.
+- Techzone Deployer Tekton tasks deployed ([deploy YAML](https://github.com/cloud-native-toolkit/deployer-tekton-tasks/blob/main/argocd.yaml)).
+- OpenShift GitOps configured with [One Touch Provisioning ArgoCD instance](https://github.com/one-touch-provisioning/otp-gitops), and any relevant RBAC rules.
+- OpenShift Pipelines operator deployed.
+
+
+
+## Pipelines organisation
+
+Maximo is deployed with a Tekton Pipeline that is defined in maximo-pipeline.yaml
+
 
 ## Tasks
 
