@@ -27,5 +27,8 @@ Currently uses oc client, git clone, and helm-update-from-source from tekton hub
 ## Usage
 
 ###
-oc apply -f maximo-pipeline.yaml to install mas-core-deploy
+```
+oc apply -f maximo-pipeline.yaml
+
 tkn pipeline start mas-core-deploy -s openshift-client-sa --pod-template pod-template.yaml -w name=shared-workspace,volumeClaimTemplateFile=workspace-template.yaml -p ibm-entitlement-key=your-entitlement-key
+```
