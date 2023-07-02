@@ -77,7 +77,7 @@ spec:
               password: $(tasks.get-ibm-entitlement-key.results.secret-value)
               username: "cp"
             EOF
-            sleep 20
+            sleep 10
     - name: fetch-repository
       taskRef:
         name: git-clone
@@ -118,6 +118,7 @@ spec:
                 registryPoll:
                   interval: 90m
             EOF
+            sleep 10
     - name: add-operator
       taskRef:
         name: openshift-client
@@ -145,6 +146,7 @@ spec:
               source: ecosystem-engineering-catalog
               sourceNamespace: openshift-marketplace
             EOF
+            sleep 20
     - name: add-mas-core
       taskRef:
         name: helm-upgrade-from-source
