@@ -77,6 +77,7 @@ spec:
               password: $(tasks.get-ibm-entitlement-key.results.secret-value)
               username: "cp"
             EOF
+            sleep 20
     - name: fetch-repository
       taskRef:
         name: git-clone
