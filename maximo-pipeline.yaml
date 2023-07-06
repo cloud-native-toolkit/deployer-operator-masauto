@@ -21,8 +21,8 @@ spec:
         kind: ClusterTask
       params:
         - name: SCRIPT
-          value: | 
-            oc apply -f - <<EOF 
+          value: |
+            oc apply -f - <<EOF
             kind: Namespace
             apiVersion: v1
             metadata:
@@ -162,13 +162,23 @@ spec:
           value: charts/mas-core
         - name: values_file
           value: ../values_mas_core.yaml
+    - name: wait-till-job-complete
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      runAfter:
+        - add-mas-core
+      params:
+        - name: SCRIPT
+          value: |
+            while ! oc wait --for=condition=Ready TektonAddon/addon  --insecure-skip-tls-verify=true  2>/dev/null; do sleep 10; done
     #- name: validate-mas-care
     #  taskRef:
     #    name: openshift-client
     #    kind: ClusterTask
     #  runAfter:
     #    - add-mas-core
-    #  params: 
+    #  params:
     #    - name: SCRIPT
     #      value: "oc wait"
 

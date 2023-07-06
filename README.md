@@ -12,7 +12,7 @@ A `deployer` cluster is configured with the following items:
 - Techzone Deployer Tekton tasks deployed ([deploy YAML](https://github.com/cloud-native-toolkit/deployer-tekton-tasks/blob/main/argocd.yaml)).
 - OpenShift GitOps configured with [One Touch Provisioning ArgoCD instance](https://github.com/one-touch-provisioning/otp-gitops), and any relevant RBAC rules.
 - OpenShift Pipelines operator deployed.
-
+- deployer pipelines tasks and cluster tasks
 
 
 ## Pipelines organisation
@@ -30,5 +30,5 @@ Currently uses oc client, git clone, and helm-update-from-source from tekton hub
 ```
 oc apply -f maximo-pipeline.yaml
 
-tkn pipeline start mas-core-deploy -s openshift-client-sa --pod-template pod-template.yaml -w name=shared-workspace,volumeClaimTemplateFile=workspace-template.yaml -p ibm-entitlement-key=your-entitlement-key
+tkn pipeline start mas-core-deploy --pod-template pod-template.yaml -w name=shared-workspace,volumeClaimTemplateFile=workspace-template.yaml
 ```
