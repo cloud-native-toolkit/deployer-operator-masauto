@@ -32,3 +32,44 @@ oc apply -f maximo-pipeline.yaml
 
 tkn pipeline start mas-core-deploy --pod-template pod-template.yaml -w name=shared-workspace,volumeClaimTemplateFile=workspace-template.yaml
 ```
+
+```
+yaml 
+apiVersion: tekton.dev/v1 
+kind: Task 
+metadata: 
+  name: mytask 
+spec: 
+  steps: 
+    - name: writesomething 
+	  image: ubuntu 
+	  command: ["bash", "-c"] 
+	  args: ["echo 'foo' > /my-cache/bar"] volumeMounts: 
+	    - name: my-cache 
+		  mountPath: /my-cache 
+--- 
+apiVersion: tekton.dev/v1 
+kind: Pipeline 
+metadata: 
+  name: mypipeline 
+spec: 
+  tasks: 
+    - name: task1 
+	  taskRef: 
+	    name: mytask 
+--- 
+apiVersion: tekton.dev/v1 
+kind: PipelineRun 
+metadata: 
+  name: mypipelinerun 
+spec: 
+  pipelineRef: 
+    name: mypipeline 
+	taskRunTemplate: 
+	  podTemplate: 
+	    securityContext: 
+		  runAsNonRoot: true 
+		  runAsUser: 1001 
+		  volumes: 
+		    - name: my-cache    	  persistentVolumeClaim: claimName: my-volume-claim 
+``` 

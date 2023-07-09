@@ -1,0 +1,20 @@
+---
+apiVersion: tekton.dev/v1beta1 # or tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: pr-mas-core-deploy
+spec:
+  workspaces:
+    - name: shared-workspace
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 1Gi
+  pipelineRef:
+    name: mas-core-deploy
+  podTemplate:
+    securityContext:
+      fsGroup: 65532
