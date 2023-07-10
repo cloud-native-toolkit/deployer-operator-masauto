@@ -1,5 +1,5 @@
 ---
-apiVersion: tekton.dev/v1
+apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
   name: mas-core-deploy
@@ -17,8 +17,8 @@ spec:
   tasks:
     - name: add-namespace
       TaskRef:
-        name: openshift-client
-        kind: ClusterTask
+        kind: Task
+        name: ibm-pak
       params:
         - name: SCRIPT
           value: |
@@ -30,8 +30,8 @@ spec:
             EOF
     - name: add-operator-group
       taskRef:
-        name: openshift-client
-        kind: ClusterTask
+        kind: Task
+        name: ibm-pak
       runAfter:
         - add-namespace
       params:
@@ -59,8 +59,8 @@ spec:
             https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
     - name: add-entitlement-key
       taskRef:
-        name: openshift-client
-        kind: ClusterTask
+        kind: Task
+        name: ibm-pak
       runAfter:
         - get-ibm-entitlement-key
       params:
@@ -80,8 +80,14 @@ spec:
             sleep 10
     - name: fetch-repository
       taskRef:
-        name: git-clone
-        kind: ClusterTask
+        resolver: hub
+        params:
+          - name: kind
+            value: task
+          - name: name
+            value: git-clone
+          - name: version
+            value: "0.9"
       workspaces:
         - name: output
           workspace: shared-workspace
@@ -92,8 +98,8 @@ spec:
           value: "main"
     - name: add-catalog-source
       taskRef:
-        name: openshift-client
-        kind: ClusterTask
+        kind: Task
+        name: ibm-pak
       runAfter:
         - add-entitlement-key
       params:
@@ -121,8 +127,8 @@ spec:
             sleep 10
     - name: add-operator
       taskRef:
-        name: openshift-client
-        kind: ClusterTask
+        kind: Task
+        name: ibm-pak
       runAfter:
         - add-catalog-source
         - add-operator-group
@@ -149,8 +155,12 @@ spec:
             sleep 20
     - name: add-mas-core
       taskRef:
-        name: helm-upgrade-from-source
-        kind: ClusterTask
+        resolver: hub
+        params:
+          - name: name
+            value: helm-upgrade-from-source
+          - name: version
+            value: "0.3"
       runAfter:
         - fetch-repository
         - add-operator
@@ -171,16 +181,7 @@ spec:
       params:
         - name: SCRIPT
           value: |
-            while ! oc wait --for=condition=Ready TektonAddon/addon  --insecure-skip-tls-verify=true  2>/dev/null; do sleep 10; done
-    #- name: validate-mas-care
-    #  taskRef:
-    #    name: openshift-client
-    #    kind: ClusterTask
-    #  runAfter:
-    #    - add-mas-core
-    #  params:
-    #    - name: SCRIPT
-    #      value: "oc wait"
+            while ! oc wait --for=condition=available deployment/masauto-operator-controller-manager -n masauto-operator-system --insecure-skip-tls-verify  2>/dev/null; do sleep 10; done
 
 
 
