@@ -181,7 +181,6 @@ spec:
       params:
         - name: SCRIPT
           value: |
-            while ! oc wait --for=condition=available deployment/masauto-operator-controller-manager -n masauto-operator-system --insecure-skip-tls-verify  2>/dev/null; do sleep 10; done
-
+            oc wait --for=condition=available deployment/masauto-operator-controller-manager -n masauto-operator-system --insecure-skip-tls-verify  2>/dev/null
 
 
