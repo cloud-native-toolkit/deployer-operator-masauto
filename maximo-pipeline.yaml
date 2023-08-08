@@ -181,6 +181,8 @@ spec:
       params:
         - name: SCRIPT
           value: |
-            oc wait --for=condition=available deployment/masauto-operator-controller-manager -n masauto-operator-system --insecure-skip-tls-verify  2>/dev/null
+            oc config current-context
+            date
+            oc wait --for=condition=available deployment/masauto-operator-controller-manager -n masauto-operator-system
 
 

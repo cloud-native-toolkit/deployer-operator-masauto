@@ -1,0 +1,167 @@
+---
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: mas-cli-deploy
+  namespace: default
+spec:
+  workspaces:
+    - name: ws
+  params:
+    - name: namespace
+      type: string
+      default: "mas"
+    - name: license-file-secret-name
+      description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
+      type: string
+      default: "false"
+    - name: ibm-entitlement-key
+      description: "IBM entitlement key. If not set, will use secret manager."
+      type: string
+      default: "false"
+  tasks:
+    - name: get-maximo-licensefile
+      params:
+        - name: KEY_ID
+          value: 0ae3295c-95dd-c323-82af-1be5587d998f
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+        - name: LICENSE_FILE_SECRET_NAME
+          value: "$(params.license-file-secret-name)"
+      taskSpec:
+        params:
+          - name: KEY_ID
+          - name: SECRETS_MANAGER_ENDPOINT_URL
+          - name: LICENSE_FILE_SECRET_NAME
+        steps:
+          - name: write-maximo-licensefile
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+
+              if [[ $(params.LICENSE_FILE_SECRET_NAME) == "false" ]]; then
+                # Retrieve the IBM Cloud API Key configured in a `deployer` cluster
+                export IBMCLOUD_API_KEY=$(oc get secret ibm-secret -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d)
+                export AUTH_RESPONSE_JSON=$(curl -s -X POST \
+                  "https://iam.cloud.ibm.com/identity/token" \
+                  --header 'Content-Type: application/x-www-form-urlencoded' \
+                  --header 'Accept: application/json' \
+                  --data-urlencode 'grant_type=urn:ibm:params:oauth:grant-type:apikey' \
+                  --data-urlencode "apikey=${IBMCLOUD_API_KEY}")
+                export ACCESS_TOKEN=$(echo $AUTH_RESPONSE_JSON | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
+                export SECRET_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "$(params.SECRETS_MANAGER_ENDPOINT_URL)/api/v2/secrets/$(params.KEY_ID)")
+                echo $SECRET_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$' > $(workspaces.ws.path)/license.dat
+
+              else
+                oc get secret $(params.LICENSE_FILE_SECRET_NAME) -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d > $(workspaces.ws.path)/license.dat
+              fi
+
+              cat $(workspaces.ws.path)/license.dat
+    - name: get-ibm-entitlement-key
+      taskRef:
+        name: ibmcloud-secrets-manager-get
+        kind: Task
+      params:
+        - name: KEY_ID
+          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+    - name: set-retrieved-entitlement-key
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: in
+          values: ["false"]
+      runAfter:
+        - get-ibm-entitlement-key
+        - add-namespace
+      taskSpec:
+        params:
+          - name: entitlement-key
+          - name: namespace
+        steps:
+          - name: set-entitlement-key
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              oc get secret "ibm-entitlement-key" -n $(params.namespace)
+              if [ $? -eq 0 ]; then
+                  echo "Deleting existing secret..."
+                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
+              fi
+              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.entitlement-key)"
+      params:
+        - name: entitlement-key
+          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
+        - name: namespace
+          value: "$(params.namespace)"
+    - name: set-provided-entitlement-key
+      runAfter:
+        - add-namespace
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: notin
+          values: ["false"]
+      params:
+        - name: ibm-entitlement-key
+          value: "$(params.ibm-entitlement-key)"
+        - name: namespace
+          value: "$(params.namespace)"
+      taskSpec:
+        params:
+          - name: ibm-entitlement-key
+          - name: namespace
+        steps:
+          - name: set-entitlement
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              oc get secret "ibm-entitlement-key" -n $(params.namespace)
+              if [ $? -eq 0 ]; then
+                  echo "Deleting existing secret..."
+                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
+              fi
+              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.ibm-entitlement-key)"
+    - name: 
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: in
+          values: ["false"]
+      taskRef:
+        name: ibm-pak
+        kind: Task
+      params:
+        - name: SCRIPT
+          value: |
+            echo $(workspaces.ws.path)/-maximo-licensefile) > $(workspaces.ws.path)/license.dat
+    - name: install-mas
+      taskRef:
+        name: mas-cli
+        kind: Task
+        params:
+          - name: SCRIPT
+            value: |
+              mas install
+      runAfter:
+        - get-ibm-entitlement-key
+      workspaces:
+        - name: source
+          workspace: shared-workspace
+      params:
+        - name: charts_dir
+          value: charts/mas-core
+        - name: values_file
+          value: ../values_mas_core.yaml
+    - name: wait-till-job-complete
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      runAfter:
+        - install-mas
+      params:
+        - name: SCRIPT
+          value: |
+            oc wait --for=condition=available deployment/masauto-operator-controller-manager -n masauto-operator-system
+
+
