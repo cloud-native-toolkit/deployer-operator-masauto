@@ -4,15 +4,43 @@ This repository contains a Tekton pipelines to deploy the [Maximo Operator](http
 
 ## Pre-requisites
 
+### Deployer Cluster
+
 An IBM Technology Zone `deployer` cluster is assumed to be configured with an appropriate Red Hat OpenShift version for the Maximo version you wish to deploy, with appropriate sizing. Refer to [Maximo Product Documentation](https://www.ibm.com/docs/en/mas-cd/continuous-delivery?topic=planning) for more information.
 
 A `deployer` cluster is configured with the following items:
 
-- ExternalSecrets operator deployed with a ClusterSecretStore configured. The remote ExternalSecrets secret store must include an IBM Entitlement Key.
+- ExternalSecrets operator deployed with a ClusterSecretStore configured. 
 - Techzone Deployer Tekton tasks deployed ([deploy YAML](https://github.com/cloud-native-toolkit/deployer-tekton-tasks/blob/main/argocd.yaml)).
 - OpenShift GitOps configured with [One Touch Provisioning ArgoCD instance](https://github.com/one-touch-provisioning/otp-gitops), and any relevant RBAC rules.
 - OpenShift Pipelines operator deployed.
 - deployer pipelines tasks and cluster tasks
+
+### Entitlement key
+
+If deploying on TechZone the entitlement key is provided from the TechZone Secrets Repo.  If deploying in a non-techzone cluster you will need to provide an entitlement key for the pipelinerun.
+
+Documentation for obtaining an entitlement key here: https://www.ibm.com/docs/en/cloud-paks/1.0?topic=clusters-obtaining-your-entitlement-key
+
+
+### Maximo License
+
+To activate Maximo you will need a valid license key which is a text file that contains software authorizations and entitlements.  This pipeline in order to run automatically will need this file to be base64 encoded and saved in a kubernetes secret.
+
+1. save the license file to a file locally such as license.dat.
+2. Use a tool to base64 encode the file such as "
+
+```
+cat license.dat | base64 > license.dat.b64
+```
+
+3. copy the output into an OpenShift secret in the default namespace
+
+```
+oc create secret generic maximolicense --from-file=fil1=license.dat.b64
+```
+
+remember the name of the secret for the pipeline run.  ( in the example above "maximolicense" is the name)
 
 
 ## Pipelines organisation
@@ -20,56 +48,17 @@ A `deployer` cluster is configured with the following items:
 Maximo is deployed with a Tekton Pipeline that is defined in maximo-pipeline.yaml
 
 
-## Tasks
-
-Currently uses oc client, git clone, and helm-update-from-source from tekton hub
 
 ## Usage
 
+### If using your own cluster
+Run Deployer prep on the cluster.
+link: https://github.com/cloud-native-toolkit/deployer-cluster-prep/blob/main/prepare-cluster.sh
+
+
 ###
+switch to version directory of choice and run these commands
 ```
-oc apply -f maximo-pipeline.yaml
-
-tkn pipeline start mas-core-deploy --pod-template pod-template.yaml -w name=shared-workspace,volumeClaimTemplateFile=workspace-template.yaml
+oc apply -f pipeline.yaml
+oc create -f pipeline-run.yaml
 ```
-
-```
-yaml 
-apiVersion: tekton.dev/v1 
-kind: Task 
-metadata: 
-  name: mytask 
-spec: 
-  steps: 
-    - name: writesomething 
-	  image: ubuntu 
-	  command: ["bash", "-c"] 
-	  args: ["echo 'foo' > /my-cache/bar"] volumeMounts: 
-	    - name: my-cache 
-		  mountPath: /my-cache 
---- 
-apiVersion: tekton.dev/v1 
-kind: Pipeline 
-metadata: 
-  name: mypipeline 
-spec: 
-  tasks: 
-    - name: task1 
-	  taskRef: 
-	    name: mytask 
---- 
-apiVersion: tekton.dev/v1 
-kind: PipelineRun 
-metadata: 
-  name: mypipelinerun 
-spec: 
-  pipelineRef: 
-    name: mypipeline 
-	taskRunTemplate: 
-	  podTemplate: 
-	    securityContext: 
-		  runAsNonRoot: true 
-		  runAsUser: 1001 
-		  volumes: 
-		    - name: my-cache    	  persistentVolumeClaim: claimName: my-volume-claim 
-``` 
