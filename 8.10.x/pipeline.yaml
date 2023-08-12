@@ -10,7 +10,24 @@ spec:
   params:
     - name: namespace
       type: string
-      default: "mas"
+      default: "maximo-suite"
+    - name: mas-instance-id
+      type: string
+      default: "inst1"
+    - name: mas-workspace-id
+      type: string
+      default: "maxworkspace"
+    - name: mas-workspace-name
+      type: string
+      default: "My Maximo Workspace"
+    - name: mas-catalog-version
+      type: string
+      description: "Do not change this unless you know what you are doing"
+      default: "v8-amd64"
+    - name: mas-channel
+      type: string
+      description: "Controls version of Maximo Operators.  Do not change this unless you know what you are doing."
+      default: "8.10.x"
     - name: license-file-secret-name
       description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
       type: string
@@ -19,8 +36,48 @@ spec:
       description: "IBM entitlement key. If not set, will use secret manager."
       type: string
       default: "false"
+    - name: uds-email
+      description: "Contact Email"
+      type: string
+    - name: uds-firstname
+      description: "Contact first name"
+      type: string
+    - name: uds-lastname
+      description: "Contact last name"
+      type: string
+    - name: storage-rwo
+      description: "RWO Storage Class"
+      type: string
+      default: "ocs-storagecluster-cephfs"
+    - name: storage-rwx
+      description: "RWX Storage Class"
+      type: string
+      default: "ocs-storagecluster-cephfs"
+    - name: storage-pipeline
+      description: "Pipeline Storage Class"
+      type: string
+      default: "ocs-storagecluster-cephfs"
+    - name: storage-accessmode
+      description: "Install Pipeline storage class access mode (ReadWriteMany or ReadWriteOnce)"
+      type: string
+      default: "ReadWriteMany"
   tasks:
+    - name: add-namespace
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc apply -f - <<EOF
+            kind: Namespace
+            apiVersion: v1
+            metadata:
+              name: $(params.namespace)
+            EOF
     - name: get-maximo-licensefile
+      workspaces:
+        - name: ws
       params:
         - name: KEY_ID
           value: 0ae3295c-95dd-c323-82af-1be5587d998f
@@ -30,6 +87,8 @@ spec:
         - name: LICENSE_FILE_SECRET_NAME
           value: "$(params.license-file-secret-name)"
       taskSpec:
+        workspaces:
+          - name: ws
         params:
           - name: KEY_ID
           - name: SECRETS_MANAGER_ENDPOINT_URL
@@ -51,7 +110,7 @@ spec:
                   --data-urlencode "apikey=${IBMCLOUD_API_KEY}")
                 export ACCESS_TOKEN=$(echo $AUTH_RESPONSE_JSON | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
                 export SECRET_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "$(params.SECRETS_MANAGER_ENDPOINT_URL)/api/v2/secrets/$(params.KEY_ID)")
-                echo $SECRET_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$' > $(workspaces.ws.path)/license.dat
+                echo $SECRET_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$' | base64 -d > $(workspaces.ws.path)/license.dat
 
               else
                 oc get secret $(params.LICENSE_FILE_SECRET_NAME) -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d > $(workspaces.ws.path)/license.dat
@@ -75,30 +134,27 @@ spec:
           values: ["false"]
       runAfter:
         - get-ibm-entitlement-key
-        - add-namespace
+      params:
+        - name: entitlement-key
+          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
+      workspaces:
+        - name: ws
       taskSpec:
+        workspaces:
+          - name: ws
         params:
           - name: entitlement-key
-          - name: namespace
         steps:
           - name: set-entitlement-key
             image: quay.io/openshift/origin-cli:4.10
             script: |
               #!/usr/bin/env bash
-              oc get secret "ibm-entitlement-key" -n $(params.namespace)
-              if [ $? -eq 0 ]; then
-                  echo "Deleting existing secret..."
-                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
-              fi
-              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.entitlement-key)"
-      params:
-        - name: entitlement-key
-          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
-        - name: namespace
-          value: "$(params.namespace)"
+              echo $(params.entitlement-key) > $(workspaces.ws.path)/ek.dat
+              echo "ek.dat created"
+              exit
     - name: set-provided-entitlement-key
-      runAfter:
-        - add-namespace
+      workspaces:
+        - name: ws
       when:
         - input: "$(params.ibm-entitlement-key)"
           operator: notin
@@ -106,62 +162,89 @@ spec:
       params:
         - name: ibm-entitlement-key
           value: "$(params.ibm-entitlement-key)"
-        - name: namespace
-          value: "$(params.namespace)"
       taskSpec:
+        workspaces:
+          - name: ws
         params:
           - name: ibm-entitlement-key
-          - name: namespace
         steps:
           - name: set-entitlement
             image: quay.io/openshift/origin-cli:4.10
             script: |
               #!/usr/bin/env bash
-              oc get secret "ibm-entitlement-key" -n $(params.namespace)
-              if [ $? -eq 0 ]; then
-                  echo "Deleting existing secret..."
-                  oc delete secrets "ibm-entitlement-key" -n $(params.namespace)
-              fi
-              oc create secret docker-registry "ibm-entitlement-key" -n $(params.namespace) "--docker-server=cp.icr.io" "--docker-username=cp" "--docker-password=$(params.ibm-entitlement-key)"
-    - name: 
-      when:
-        - input: "$(params.ibm-entitlement-key)"
-          operator: in
-          values: ["false"]
-      taskRef:
-        name: ibm-pak
-        kind: Task
-      params:
-        - name: SCRIPT
-          value: |
-            echo $(workspaces.ws.path)/-maximo-licensefile) > $(workspaces.ws.path)/license.dat
+              echo $(params.entitlement-key) > $(workspaces.ws.path)/ek.dat
+              echo "ek.dat created"
+              exit
     - name: install-mas
-      taskRef:
-        name: mas-cli
-        kind: Task
-        params:
-          - name: SCRIPT
-            value: |
-              mas install
       runAfter:
-        - get-ibm-entitlement-key
+        - get-maximo-licensefile
+        - set-provided-entitlement-key
+        - set-retrieved-entitlement-key
       workspaces:
-        - name: source
-          workspace: shared-workspace
+        - name: ws
       params:
-        - name: charts_dir
-          value: charts/mas-core
-        - name: values_file
-          value: ../values_mas_core.yaml
-    - name: wait-till-job-complete
-      taskRef:
-        kind: Task
-        name: ibm-pak
-      runAfter:
-        - install-mas
-      params:
-        - name: SCRIPT
-          value: |
-            oc wait --for=condition=available deployment/masauto-operator-controller-manager -n masauto-operator-system
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-workspace-name
+          value: "$(params.mas-workspace-name)"
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: uds-email
+          value: "$(params.uds-email)"
+        - name: uds-firstname
+          value: "$(params.uds-firstname)"
+        - name: uds-lastname
+          value: "$(params.uds-lastname)"
+        - name: storage-rwo
+          value: "$(params.storage-rwo)"
+        - name: storage-rwx
+          value: "$(params.storage-rwx)"
+        - name: storage-pipeline
+          value: "$(params.storage-pipeline)"
+        - name: storage-accessmode
+          value: "$(params.storage-accessmode)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: ibm-entitlement-key
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-workspace-name
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: uds-email
+          - name: uds-firstname
+          - name: uds-lastname
+          - name: storage-rwo
+          - name: storage-rwx
+          - name: storage-pipeline
+          - name: storage-accessmode
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              # extract entitlement key
+              oc get secret ibm-entitlement-key -n $(params.namespace) -o jsonpath='{}'
+              # extract license id from license.dat
+              export LICENSE_ID=$(cat $(workspaces.ws.path)/license.dat | head -1 | cut -d ' ' -f3)
 
+              export ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
 
+              #run mas install non-interactively
+              mas install -i $(params.mas-instance-id) \
+                -w $(params.mas-workspace-id) \
+                -W "$(params.mas-workspace-name)" \
+                -c $(params.mas-catalog-version) \
+                --mas-channel $(params.mas-channel) \
+                --ibm-entitlement-key $ENTITLEMENT_KEY \
+                --license-id $LICENSE_ID --license-file $(workspaces.ws.path)/license.dat \
+                --uds-email $(params.uds-email) --uds-firstname $(params.uds-firstname) --uds-lastname $(params.uds-lastname) \
+                --storage-rwo $(params.storage-rwo) --storage-rwx $(params.storage-rwx) \
+                --storage-pipeline $(params.storage-pipeline) --storage-accessmode $(params.storage-accessmode) \
+                --no-confirm
