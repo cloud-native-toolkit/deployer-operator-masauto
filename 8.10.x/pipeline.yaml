@@ -229,8 +229,6 @@ spec:
             image: quay.io/ibmmas/cli:latest
             script: |
               #!/usr/bin/env bash
-              # extract entitlement key
-              oc get secret ibm-entitlement-key -n $(params.namespace) -o jsonpath='{}'
               # extract license id from license.dat
               export LICENSE_ID=$(cat $(workspaces.ws.path)/license.dat | head -1 | cut -d ' ' -f3)
 
