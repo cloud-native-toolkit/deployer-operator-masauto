@@ -172,7 +172,7 @@ spec:
             image: quay.io/openshift/origin-cli:4.10
             script: |
               #!/usr/bin/env bash
-              echo $(params.entitlement-key) > $(workspaces.ws.path)/ek.dat
+              echo $(params.ibm-entitlement-key) > $(workspaces.ws.path)/ek.dat
               echo "ek.dat created"
               exit
     - name: install-mas
