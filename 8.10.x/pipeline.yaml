@@ -62,22 +62,70 @@ spec:
       type: string
       default: "ReadWriteMany"
   tasks:
-    - name: add-namespace
+    - name: get-ibm-entitlement-key
       taskRef:
+        name: ibmcloud-secrets-manager-get
         kind: Task
-        name: ibm-pak
       params:
-        - name: SCRIPT
-          value: |
-            oc apply -f - <<EOF
-            kind: Namespace
-            apiVersion: v1
-            metadata:
-              name: $(params.namespace)
-            EOF
+        - name: KEY_ID
+          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+    - name: set-retrieved-entitlement-key
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: in
+          values: ["false"]
+      runAfter:
+        - get-ibm-entitlement-key
+      params:
+        - name: retrieved-entitlement-key
+          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
+      workspaces:
+        - name: ws
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: retrieved-entitlement-key
+        steps:
+          - name: set-entitlement-key
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              echo $(params.retrieved-entitlement-key) > $(workspaces.ws.path)/ek.dat
+              echo "ek.dat created"
+              exit
+    - name: set-provided-entitlement-key
+      workspaces:
+        - name: ws
+      #when:
+      #  - input: "$(params.ibm-entitlement-key)"
+      #    operator: notin
+      #    values: ["false"]
+      params:
+        - name: provided-entitlement-key
+          value: "$(params.ibm-entitlement-key)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: provided-entitlement-key
+        steps:
+          - name: set-entitlement
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              echo $(params.provided-entitlement-key) > $(workspaces.ws.path)/ek.dat
+              echo "ek.dat created"
+              exit
     - name: get-maximo-licensefile
       workspaces:
         - name: ws
+      runAfter:
+        - set-provided-entitlement-key
+        - set-retrieved-entitlement-key
       params:
         - name: KEY_ID
           value: 0ae3295c-95dd-c323-82af-1be5587d998f
@@ -113,73 +161,13 @@ spec:
                 echo $SECRET_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$' | base64 -d > $(workspaces.ws.path)/license.dat
 
               else
-                oc get secret $(params.LICENSE_FILE_SECRET_NAME) -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d > $(workspaces.ws.path)/license.dat
+                oc get secret $(params.LICENSE_FILE_SECRET_NAME) -n default -o jsonpath='{.data.licensefile}' | base64 -d | base64 -d > $(workspaces.ws.path)/license.dat
               fi
 
               cat $(workspaces.ws.path)/license.dat
-    - name: get-ibm-entitlement-key
-      taskRef:
-        name: ibmcloud-secrets-manager-get
-        kind: Task
-      params:
-        - name: KEY_ID
-          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
-        - name: SECRETS_MANAGER_ENDPOINT_URL
-          value: >-
-            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
-    - name: set-retrieved-entitlement-key
-      when:
-        - input: "$(params.ibm-entitlement-key)"
-          operator: in
-          values: ["false"]
-      runAfter:
-        - get-ibm-entitlement-key
-      params:
-        - name: entitlement-key
-          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
-      workspaces:
-        - name: ws
-      taskSpec:
-        workspaces:
-          - name: ws
-        params:
-          - name: entitlement-key
-        steps:
-          - name: set-entitlement-key
-            image: quay.io/openshift/origin-cli:4.10
-            script: |
-              #!/usr/bin/env bash
-              echo $(params.entitlement-key) > $(workspaces.ws.path)/ek.dat
-              echo "ek.dat created"
-              exit
-    - name: set-provided-entitlement-key
-      workspaces:
-        - name: ws
-      when:
-        - input: "$(params.ibm-entitlement-key)"
-          operator: notin
-          values: ["false"]
-      params:
-        - name: ibm-entitlement-key
-          value: "$(params.ibm-entitlement-key)"
-      taskSpec:
-        workspaces:
-          - name: ws
-        params:
-          - name: ibm-entitlement-key
-        steps:
-          - name: set-entitlement
-            image: quay.io/openshift/origin-cli:4.10
-            script: |
-              #!/usr/bin/env bash
-              echo $(params.ibm-entitlement-key) > $(workspaces.ws.path)/ek.dat
-              echo "ek.dat created"
-              exit
     - name: install-mas
       runAfter:
         - get-maximo-licensefile
-        - set-provided-entitlement-key
-        - set-retrieved-entitlement-key
       workspaces:
         - name: ws
       params:
@@ -211,7 +199,6 @@ spec:
         workspaces:
           - name: ws
         params:
-          - name: ibm-entitlement-key
           - name: mas-instance-id
           - name: mas-workspace-id
           - name: mas-workspace-name

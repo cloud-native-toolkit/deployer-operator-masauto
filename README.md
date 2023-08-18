@@ -37,7 +37,7 @@ cat license.dat | base64 > license.dat.b64
 3. copy the output into an OpenShift secret in the default namespace
 
 ```
-oc create secret generic maximolicense --from-file=fil1=license.dat.b64
+oc create secret generic maximolicense --from-file=licensefile=license.dat.b64 -n default
 ```
 
 remember the name of the secret for the pipeline run.  ( in the example above "maximolicense" is the name)
