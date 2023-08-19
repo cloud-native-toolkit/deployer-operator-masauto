@@ -166,6 +166,7 @@ spec:
 
               cat $(workspaces.ws.path)/license.dat
     - name: install-mas
+      retries: 2
       runAfter:
         - get-maximo-licensefile
       workspaces:
