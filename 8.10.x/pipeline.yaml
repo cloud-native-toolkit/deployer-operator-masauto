@@ -32,6 +32,10 @@ spec:
       description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
       type: string
       default: "false"
+    - name: use-letsencrypt-certs
+      description: "use generated letsencrypt certs stored as a secret in the openshift-config namespace under letsencrypt-certs, if false, will generate self-signed certs"
+      type: string
+      default: "true"
     - name: ibm-entitlement-key
       description: "IBM entitlement key. If not set, will use secret manager."
       type: string
@@ -100,10 +104,6 @@ spec:
     - name: set-provided-entitlement-key
       workspaces:
         - name: ws
-      #when:
-      #  - input: "$(params.ibm-entitlement-key)"
-      #    operator: notin
-      #    values: ["false"]
       params:
         - name: provided-entitlement-key
           value: "$(params.ibm-entitlement-key)"
@@ -143,7 +143,7 @@ spec:
           - name: LICENSE_FILE_SECRET_NAME
         steps:
           - name: write-maximo-licensefile
-            image: quay.io/openshift/origin-cli:4.10
+            image: quay.io/openshift/origin-cli:4.12
             script: |
               #!/usr/bin/env bash
 
@@ -165,9 +165,31 @@ spec:
               fi
 
               cat $(workspaces.ws.path)/license.dat
+    - name: get-tls-certs
+      when:
+        - input: "$(params.use-letsencrypt-certs)"
+          operator: in
+          values: ["true"]
+      retries: 2
+      runAfter:
+        - get-maximo-licensefile
+      workspaces:
+        - name: ws
+      taskSpec:
+        workspaces:
+          - name: ws
+        steps:
+          - name: get-tls-certs
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              mkdir -p $(workspaces.ws.path)/masconfig/certs
+              wget -qO - https://letsencrypt.org/certs/lets-encrypt-r3.pem > $(workspaces.ws.path)/masconfig/certs/ca.crt
+              oc get secret letsencrypt-certs -n openshift-config -o jsonpath="{.data['tls\.key']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/tls.key
+              oc get secret letsencrypt-certs -n openshift-config -o jsonpath="{.data['tls\.crt']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/tls.crt
     - name: install-mas
       retries: 2
       runAfter:
+        - get-tls-certs
         - get-maximo-licensefile
       workspaces:
         - name: ws
@@ -221,6 +243,11 @@ spec:
               export LICENSE_ID=$(cat $(workspaces.ws.path)/license.dat | head -1 | cut -d ' ' -f3)
 
               export ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+
+              #this sets things up for manual cert management
+              # got this via https://github.com/ibm-mas/ansible-devops/pull/501
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export MAS_MANUAL_CERT_MGMT=True
 
               #run mas install non-interactively
               mas install -i $(params.mas-instance-id) \
