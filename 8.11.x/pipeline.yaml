@@ -27,7 +27,7 @@ spec:
     - name: mas-channel
       type: string
       description: "Controls version of Maximo Operators.  Do not change this unless you know what you are doing."
-      default: "8.10.x"
+      default: "8.11.x"
     - name: license-file-secret-name
       description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
       type: string
