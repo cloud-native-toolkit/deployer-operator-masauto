@@ -2,7 +2,7 @@
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
-  generateName: pr-mas-devops-
+  generateName: pr-mas-cli-
 spec:
   params:
     - name: uds-email
@@ -21,7 +21,7 @@ spec:
             requests:
               storage: 1Gi
   pipelineRef:
-    name: mas-masdevops-deploy
+    name: mas-cli-deploy
   podTemplate:
     securityContext:
       fsGroup: 65532

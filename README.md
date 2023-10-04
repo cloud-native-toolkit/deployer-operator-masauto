@@ -45,7 +45,11 @@ remember the name of the secret for the pipeline run.  ( in the example above "m
 
 ## Pipelines organisation
 
-Maximo is deployed with a Tekton Pipeline that is defined in maximo-pipeline.yaml
+Maximo is deployed with a Tekton Pipeline that is defined in pipeline.yaml
+
+the pipeline runs the MAS DevOps playbooks and can be modified or extended using other roles and playbooks.
+
+Consult the documentation for MAS DevOps [here](https://ibm-mas.github.io/ansible-devops/)
 
 
 

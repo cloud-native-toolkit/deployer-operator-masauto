@@ -2,7 +2,7 @@
 apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
-  name: mas-masdevops-deploy
+  name: mas-cli-deploy
   namespace: default
 spec:
   workspaces:
@@ -13,7 +13,7 @@ spec:
       default: "maximo-suite"
     - name: mas-instance-id
       type: string
-      default: "maximo"
+      default: "inst1"
     - name: mas-workspace-id
       type: string
       default: "maxworkspace"
@@ -209,20 +209,16 @@ spec:
             image: quay.io/congxdev/ibm-pak-ubi:latest
             script: |
               ### this is the method to load certs to the mas installer
-              mkdir -p $(workspaces.ws.path)/masconfig/certs/core/
-              wget -qO - https://letsencrypt.org/certs/lets-encrypt-r3.pem > $(workspaces.ws.path)/masconfig/certs/core/ca.crt
-              oc get secret letsencrypt-certs -n openshift-config -o jsonpath="{.data['tls\.key']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/core/tls.key
-              oc get secret letsencrypt-certs -n openshift-config -o jsonpath="{.data['tls\.crt']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/core/tls.crt
-              ls $(workspaces.ws.path)/masconfig/certs/core/
-              cat $(workspaces.ws.path)/masconfig/certs/core/tls.key
-              cat $(workspaces.ws.path)/masconfig/certs/core/tls.crt
+              #mkdir -p $(workspaces.ws.path)/masconfig/certs
+              #wget -qO - https://letsencrypt.org/certs/lets-encrypt-r3.pem > $(workspaces.ws.path)/masconfig/certs/ca.crt
+              #oc get secret letsencrypt-certs -n openshift-config -o jsonpath="{.data['tls\.key']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/tls.key
+              #oc get secret letsencrypt-certs -n openshift-config -o jsonpath="{.data['tls\.crt']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/tls.crt
+              #ls $(workspaces.ws.path)/masconfig/certs/
+              #cat $(workspaces.ws.path)/masconfig/certs/tls.key
+              #cat $(workspaces.ws.path)/masconfig/certs/tls.crt
 
               # copy letsencrypt-certs secret to the name where maximo is expecting to find it.
-              if oc get secret -n openshift-ingress router-certs-default; then
-                echo "router-certs-default secret already exists"
-              else
-                oc get secret letsencrypt-certs -n openshift-ingress -o yaml | yq '.metadata["name"]="router-certs-default"' | oc apply -n openshift-ingress -f -
-              fi
+              oc get secret letsencrypt-certs -n openshift-ingress -o yaml | yq '.metadata["name"]="router-certs-default"' | oc apply -n openshift-ingress -f -
     - name: install-mas
       retries: 2
       runAfter:
@@ -277,21 +273,25 @@ spec:
             script: |
               #!/usr/bin/env bash
               # extract license id from license.dat
-              export SLS_LICENSE_ID=$(cat $(workspaces.ws.path)/license.dat | head -1 | cut -d ' ' -f3)
-              export SLS_LICENSE_FILE=$(workspaces.ws.path)/license.dat
+              export LICENSE_ID=$(cat $(workspaces.ws.path)/license.dat | head -1 | cut -d ' ' -f3)
 
-              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
 
-              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              #possible setup for manual cert management
+              # got this via https://github.com/ibm-mas/ansible-devops/pull/501
+              #export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              #export MAS_MANUAL_CERT_MGMT=True
 
-              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
-              export MAS_MANUAL_CERT_MGMT=True
-
-              export UDS_CONTACT_EMAIL=$(params.uds-email)
-              export UDS_CONTACT_FIRSTNAME=$(params.uds-firstname)
-              export UDS_CONTACT_LASTNAME=$(params.uds-lastname)
-
-              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
-              export MAS_WORKSPACE_NAME=$(params.mas-workspace-name)
-
-              ansible-playbook ibm.mas_devops.oneclick_core
+              #run mas install non-interactively
+              mas install -i $(params.mas-instance-id) \
+                --accept-license \
+                -w $(params.mas-workspace-id) \
+                -W "$(params.mas-workspace-name)" \
+                -c $(params.mas-catalog-version) \
+                --mas-channel $(params.mas-channel) \
+                --ibm-entitlement-key $ENTITLEMENT_KEY \
+                --license-id $LICENSE_ID --license-file $(workspaces.ws.path)/license.dat \
+                --uds-email $(params.uds-email) --uds-firstname $(params.uds-firstname) --uds-lastname $(params.uds-lastname) \
+                --storage-rwo $(params.storage-rwo) --storage-rwx $(params.storage-rwx) \
+                --storage-pipeline $(params.storage-pipeline) --storage-accessmode $(params.storage-accessmode) \
+                --no-confirm
