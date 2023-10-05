@@ -28,6 +28,10 @@ spec:
       type: string
       description: "Controls version of Maximo Operators.  Do not change this unless you know what you are doing."
       default: "8.11.x"
+    - name: mas-install-cp4d-manage
+      type: string
+      description: "controls whether Maximo Manage and CP4D+Cognos is installed"
+      default: "false"
     - name: license-file-secret-name
       description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
       type: string
@@ -225,6 +229,7 @@ spec:
               fi
     - name: install-mas
       retries: 2
+      timeout: "3h"
       runAfter:
         - get-tls-certs
         - get-maximo-licensefile
@@ -295,3 +300,39 @@ spec:
               export MAS_WORKSPACE_NAME=$(params.mas-workspace-name)
 
               ansible-playbook ibm.mas_devops.oneclick_core
+    - name: install-cp4d-manage
+      when:
+        - input: "$(params.mas-install-cp4d-manage)"
+          operator: in
+          values: ["true"]
+      retries: 2
+      timeout: "3h"
+      runAfter:
+        - install-mas
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_APP_ID=manage
+
+              export MAS_APPWS_COMPONENTS="base=latest,health=latest"
+
+              export CPD_INSTALL_PLATFORM="true"
+              export CPD_INSTALL_COGNOS="true"
+              export CPD_PRODUCT_VERSION="4.6.6"
+
+              ansible-playbook ibm.mas_devops.oneclick_add_manage
