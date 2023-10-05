@@ -20,6 +20,9 @@ spec:
           resources:
             requests:
               storage: 1Gi
+  timeouts:
+    pipeline: "0"
+    tasks: "3h"
   pipelineRef:
     name: mas-masdevops-deploy
   podTemplate:
