@@ -11,6 +11,8 @@ spec:
       value: "TechZone"
     - name: uds-lastname
       value: "Developer"
+    - name: mas-install-cp4d-manage
+      value: "true"
   workspaces:
     - name: ws
       volumeClaimTemplate:
@@ -20,11 +22,8 @@ spec:
           resources:
             requests:
               storage: 1Gi
-  timeouts:
-    pipeline: "0"
-    tasks: "4h"
   pipelineRef:
     name: mas-masdevops-deploy
-  podTemplate:
-    securityContext:
-      fsGroup: 65532
+#  podTemplate:
+#    securityContext:
+#      fsGroup: 65532
