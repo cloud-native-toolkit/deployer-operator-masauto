@@ -221,6 +221,23 @@ spec:
               cat $(workspaces.ws.path)/masconfig/certs/core/tls.key
               cat $(workspaces.ws.path)/masconfig/certs/core/tls.crt
 
+              # copy to app directories
+              echo "copying to app directories..."
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/iot/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/manage/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/monitor/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/add/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/assist/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/optimizer/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/visualinspection/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/iot/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/manage/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/monitor/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/add/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/assist/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/optimizer/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/visualinspection/
+
               # copy letsencrypt-certs secret to the name where maximo is expecting to find it.
               if oc get secret -n openshift-ingress router-certs-default; then
                 echo "router-certs-default secret already exists"

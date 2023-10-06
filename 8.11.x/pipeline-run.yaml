@@ -4,13 +4,6 @@ kind: PipelineRun
 metadata:
   generateName: pr-mas-devops-
 spec:
-  params:
-    - name: uds-email
-      value: "dev-techzone@ibm.com"
-    - name: uds-firstname
-      value: "TechZone"
-    - name: uds-lastname
-      value: "Developer"
   workspaces:
     - name: ws
       volumeClaimTemplate:
@@ -22,7 +15,7 @@ spec:
               storage: 1Gi
   timeouts:
     pipeline: "0"
-    tasks: "3h"
+    tasks: "4h"
   pipelineRef:
     name: mas-masdevops-deploy
   podTemplate:
