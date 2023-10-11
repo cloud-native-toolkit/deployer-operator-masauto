@@ -19,7 +19,7 @@ spec:
       default: "maxworkspace"
     - name: mas-workspace-name
       type: string
-      default: "My Maximo Workspace"
+      default: "MaximoWS"
     - name: mas-catalog-version
       type: string
       description: "Do not change this unless you know what you are doing"
@@ -323,7 +323,7 @@ spec:
           operator: in
           values: ["true"]
       retries: 2
-      timeout: "3h"
+      timeout: "5h"
       runAfter:
         - install-mas
       workspaces:
@@ -346,7 +346,7 @@ spec:
               export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
               export MAS_APP_ID=manage
 
-              export MAS_APPWS_COMPONENTS="base=latest,health=latest"
+              export MAS_APPWS_COMPONENTS="base=8.7.0"
 
               export CPD_INSTALL_PLATFORM="true"
               export CPD_INSTALL_COGNOS="true"
