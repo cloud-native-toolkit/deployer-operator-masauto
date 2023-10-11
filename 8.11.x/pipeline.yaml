@@ -331,11 +331,17 @@ spec:
       params:
         - name: mas-instance-id
           value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-workspace-name
+          value: "$(params.mas-workspace-name)"
       taskSpec:
         workspaces:
           - name: ws
         params:
           - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-workspace-name
         steps:
           - name: run-mas-cli
             image: quay.io/ibmmas/cli:latest
@@ -345,8 +351,12 @@ spec:
               export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
               export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
               export MAS_APP_ID=manage
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_WORKSPACE_NAME=$(params.mas-workspace-name)
+              export MAS_APPWS_BINDINGS_JDBC=workspace-application
 
-              export MAS_APPWS_COMPONENTS="base=8.7.0"
+              export MAS_APPWS_COMPONENTS="base=latest,health=latest"
+              export MAS_APP_SETTINGS_DEMODATA=true
 
               export CPD_INSTALL_PLATFORM="true"
               export CPD_INSTALL_COGNOS="true"
