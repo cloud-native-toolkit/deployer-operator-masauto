@@ -8,26 +8,9 @@ spec:
   workspaces:
     - name: ws
   params:
-    - name: namespace
-      type: string
-      default: "maximo-suite"
     - name: mas-instance-id
       type: string
-      default: "maximo"
-    - name: mas-workspace-id
-      type: string
-      default: "maxworkspace"
-    - name: mas-workspace-name
-      type: string
-      default: "MaximoWS"
-    - name: mas-catalog-version
-      type: string
-      description: "Do not change this unless you know what you are doing"
-      default: "v8-amd64"
-    - name: mas-channel
-      type: string
-      description: "Controls version of Maximo Operators.  Do not change this unless you know what you are doing."
-      default: "8.11.x"
+      default: "inst1"
     - name: mas-install-cp4d-manage
       type: string
       description: "controls whether Maximo Manage and CP4D+Cognos is installed"
@@ -53,22 +36,6 @@ spec:
     - name: uds-lastname
       description: "Contact last name"
       type: string
-    - name: storage-rwo
-      description: "RWO Storage Class"
-      type: string
-      default: "ocs-storagecluster-cephfs"
-    - name: storage-rwx
-      description: "RWX Storage Class"
-      type: string
-      default: "ocs-storagecluster-cephfs"
-    - name: storage-pipeline
-      description: "Pipeline Storage Class"
-      type: string
-      default: "ocs-storagecluster-cephfs"
-    - name: storage-accessmode
-      description: "Install Pipeline storage class access mode (ReadWriteMany or ReadWriteOnce)"
-      type: string
-      default: "ReadWriteMany"
   finally:
     - name: update-configmap-failure
       when:
@@ -255,44 +222,20 @@ spec:
       params:
         - name: mas-instance-id
           value: "$(params.mas-instance-id)"
-        - name: mas-workspace-id
-          value: "$(params.mas-workspace-id)"
-        - name: mas-workspace-name
-          value: "$(params.mas-workspace-name)"
-        - name: mas-catalog-version
-          value: "$(params.mas-catalog-version)"
-        - name: mas-channel
-          value: "$(params.mas-channel)"
         - name: uds-email
           value: "$(params.uds-email)"
         - name: uds-firstname
           value: "$(params.uds-firstname)"
         - name: uds-lastname
           value: "$(params.uds-lastname)"
-        - name: storage-rwo
-          value: "$(params.storage-rwo)"
-        - name: storage-rwx
-          value: "$(params.storage-rwx)"
-        - name: storage-pipeline
-          value: "$(params.storage-pipeline)"
-        - name: storage-accessmode
-          value: "$(params.storage-accessmode)"
       taskSpec:
         workspaces:
           - name: ws
         params:
           - name: mas-instance-id
-          - name: mas-workspace-id
-          - name: mas-workspace-name
-          - name: mas-catalog-version
-          - name: mas-channel
           - name: uds-email
           - name: uds-firstname
           - name: uds-lastname
-          - name: storage-rwo
-          - name: storage-rwx
-          - name: storage-pipeline
-          - name: storage-accessmode
         steps:
           - name: run-mas-cli
             image: quay.io/ibmmas/cli:latest
@@ -313,9 +256,6 @@ spec:
               export UDS_CONTACT_FIRSTNAME=$(params.uds-firstname)
               export UDS_CONTACT_LASTNAME=$(params.uds-lastname)
 
-              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
-              export MAS_WORKSPACE_NAME=$(params.mas-workspace-name)
-
               ansible-playbook ibm.mas_devops.oneclick_core
     - name: install-cp4d-manage
       when:
@@ -331,17 +271,11 @@ spec:
       params:
         - name: mas-instance-id
           value: "$(params.mas-instance-id)"
-        - name: mas-workspace-id
-          value: "$(params.mas-workspace-id)"
-        - name: mas-workspace-name
-          value: "$(params.mas-workspace-name)"
       taskSpec:
         workspaces:
           - name: ws
         params:
           - name: mas-instance-id
-          - name: mas-workspace-id
-          - name: mas-workspace-name
         steps:
           - name: run-mas-cli
             image: quay.io/ibmmas/cli:latest
@@ -351,9 +285,6 @@ spec:
               export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
               export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
               export MAS_APP_ID=manage
-              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
-              export MAS_WORKSPACE_NAME=$(params.mas-workspace-name)
-              export MAS_APPWS_BINDINGS_JDBC=workspace-application
 
               export MAS_APPWS_COMPONENTS="base=latest,health=latest"
               export MAS_APP_SETTINGS_DEMODATA=true
