@@ -10,7 +10,7 @@ spec:
   params:
     - name: mas-instance-id
       type: string
-      default: "inst1"
+      default: "i1"
     - name: mas-install-cp4d-manage
       type: string
       description: "controls whether Maximo Manage and CP4D+Cognos is installed"
