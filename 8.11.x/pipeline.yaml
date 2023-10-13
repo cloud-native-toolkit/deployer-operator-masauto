@@ -10,7 +10,7 @@ spec:
   params:
     - name: mas-instance-id
       type: string
-      default: "i1"
+      default: "inst1"
     - name: mas-install-cp4d-manage
       type: string
       description: "controls whether Maximo Manage and CP4D+Cognos is installed"
@@ -95,6 +95,7 @@ spec:
             image: quay.io/openshift/origin-cli:4.10
             script: |
               #!/usr/bin/env bash
+              echo $(params.retrieved-entitlement-key)
               echo $(params.retrieved-entitlement-key) > $(workspaces.ws.path)/ek.dat
               echo "ek.dat created"
               exit
