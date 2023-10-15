@@ -15,6 +15,10 @@ spec:
       type: string
       description: "controls whether Maximo Manage and CP4D+Cognos is installed"
       default: "false"
+    - name: install-demo-data
+      type: string
+      description: "install demo data, adds 2+ hours to install time"
+      default: "false"
     - name: license-file-secret-name
       description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
       type: string
@@ -272,11 +276,14 @@ spec:
       params:
         - name: mas-instance-id
           value: "$(params.mas-instance-id)"
+        - name: install-demo-data
+          value: "$(params.install-demo-data)"
       taskSpec:
         workspaces:
           - name: ws
         params:
           - name: mas-instance-id
+          - name: install-demo-data
         steps:
           - name: run-mas-cli
             image: quay.io/ibmmas/cli:latest
@@ -284,11 +291,12 @@ spec:
               #!/usr/bin/env bash
               export MAS_INSTANCE_ID=$(params.mas-instance-id)
               export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export MAS_CONFIG_SCOPE=system
               export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
               export MAS_APP_ID=manage
 
-              export MAS_APPWS_COMPONENTS="base=latest,health=latest"
-              export MAS_APP_SETTINGS_DEMODATA=true
+              export MAS_APPWS_COMPONENTS="base=latest"
+              export MAS_APP_SETTINGS_DEMODATA=$(params.install-demo-data)
 
               export CPD_INSTALL_PLATFORM="true"
               export CPD_INSTALL_COGNOS="true"
