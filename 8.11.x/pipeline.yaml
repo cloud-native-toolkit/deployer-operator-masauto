@@ -218,7 +218,7 @@ spec:
               fi
     - name: install-mas
       retries: 2
-      timeout: "3h"
+      timeout: "6h"
       runAfter:
         - get-tls-certs
         - get-maximo-licensefile
@@ -268,7 +268,7 @@ spec:
           operator: in
           values: ["true"]
       retries: 2
-      timeout: "5h"
+      timeout: "6h"
       runAfter:
         - install-mas
       workspaces:
