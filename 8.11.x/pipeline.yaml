@@ -295,7 +295,7 @@ spec:
               export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
               export MAS_APP_ID=manage
 
-              export MAS_APPWS_COMPONENTS="base=8.7.0"
+              export MAS_APPWS_COMPONENTS="base=latest"
               export MAS_APP_SETTINGS_DEMODATA=$(params.install-demo-data)
 
               export CPD_INSTALL_PLATFORM="true"
