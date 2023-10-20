@@ -18,7 +18,7 @@ spec:
     - name: install-demo-data
       type: string
       description: "install demo data, adds 2+ hours to install time"
-      default: "false"
+      default: "true"
     - name: license-file-secret-name
       description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
       type: string
@@ -295,7 +295,7 @@ spec:
               export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
               export MAS_APP_ID=manage
 
-              export MAS_APPWS_COMPONENTS="base=latest"
+              export MAS_APPWS_COMPONENTS="base=8.7.0"
               export MAS_APP_SETTINGS_DEMODATA=$(params.install-demo-data)
 
               export CPD_INSTALL_PLATFORM="true"
