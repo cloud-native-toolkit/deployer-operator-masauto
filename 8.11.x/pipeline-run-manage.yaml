@@ -24,7 +24,7 @@ spec:
               storage: 1Gi
   timeouts:
     pipeline: "0"
-    tasks: "6h"
+    tasks: "9h"
   pipelineRef:
     name: mas-masdevops-deploy
   podTemplate:
