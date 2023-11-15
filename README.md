@@ -1,12 +1,14 @@
-# Techzone Deployer for the Maximo Operator
+# Techzone Deployer for the Maximo 
 
-This repository contains a Tekton pipelines to deploy the [Maximo Operator](https://github.com/cloud-native-toolkit/operator-masauto) that packages [mas-ansible](https://ibm-mas.github.io/ansible-devops/).
+This repository contains a Tekton pipelines to deploy Maximo using [mas-ansible](https://ibm-mas.github.io/ansible-devops/).
 
 ## Pre-requisites
 
 ### Deployer Cluster
 
 An IBM Technology Zone `deployer` cluster is assumed to be configured with an appropriate Red Hat OpenShift version for the Maximo version you wish to deploy, with appropriate sizing. Refer to [Maximo Product Documentation](https://www.ibm.com/docs/en/mas-cd/continuous-delivery?topic=planning) for more information.
+
+A deployer cluster can be created by installing the Deployer Operator
 
 A `deployer` cluster is configured with the following items:
 
@@ -50,8 +52,6 @@ Maximo is deployed with a Tekton Pipeline that is defined in pipeline.yaml
 the pipeline runs the MAS DevOps playbooks and can be modified or extended using other roles and playbooks.
 
 Consult the documentation for MAS DevOps [here](https://ibm-mas.github.io/ansible-devops/)
-
-
 
 ## Usage
 
