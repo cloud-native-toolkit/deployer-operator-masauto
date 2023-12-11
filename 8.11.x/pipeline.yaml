@@ -243,7 +243,7 @@ spec:
           - name: uds-lastname
         steps:
           - name: run-mas-cli
-            image: quay.io/ibmmas/cli:latest
+            image: quay.io/ibmmas/cli:7.9.0
             script: |
               #!/usr/bin/env bash
               # extract license id from license.dat
@@ -286,7 +286,7 @@ spec:
           - name: install-demo-data
         steps:
           - name: run-mas-cli
-            image: quay.io/ibmmas/cli:latest
+            image: quay.io/ibmmas/cli:7.9.0
             script: |
               #!/usr/bin/env bash
               export MAS_INSTANCE_ID=$(params.mas-instance-id)
