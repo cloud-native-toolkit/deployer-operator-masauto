@@ -1,0 +1,109 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: pr-mas-deploy-
+  namespace: default
+spec:
+  pipelineRef:
+      name: mas-devops-deploy
+  params:
+    - name: uds-email
+      value: "dev-techzone@ibm.com"
+    - name: uds-firstname
+      value: "TechZone"
+    - name: uds-lastname
+      value: "Developer"
+    - name: use-letsencrypt-certs
+      value: "true"
+    #lets encrypt secret location and namespace
+    - name: tlscert-secret
+      value: "user-serving-cert-000"
+    - name: tlscert-namespace
+      value: "openshift-kube-apiserver"
+    - name: ibm-entitlement-key
+      value: "false"
+    #mas-license-secret
+    - name: license-file-secret-name
+      value: "false"
+    # Optionally change storageclass for ocpv
+    - name: rwx-storageclass
+      value: ocs-external-storagecluster-cephfs
+    - name: rwo-storageclass
+      value: ocs-external-storagecluster-cephfs
+
+    # install MAS Core. This task may be skipped once done successfully
+    - name: mas-install-core
+      value: "true"
+
+    # install MAS Manage, depending on MAS Core, optionally CP4D/DB2
+    - name: mas-install-manage
+      value: "false"
+    - name: mas-install-demo-data
+      value: "false"
+    - name: mas-cp4d-install-cognos
+      value: "false"
+
+    # install MAS Optimizer
+    - name: mas-install-optimizer
+      value: "false"
+
+    # install MAS Visual Inspection
+    - name: mas-install-visualinspection
+      value: "false"
+
+    - name: run-kafka-fix
+      value: "false"
+    # install MAS IoT and Monitor, depending on MAS Core
+    - name: mas-install-iot
+      value: "false"
+    - name: mas-install-monitor
+      value: "false"
+
+    # install MAS Predict, depending on MAS Core, Health, IoT and Monitor, optionally CP4D services
+    - name: mas-install-predict
+      value: "false"
+    - name: cpd-platform-components
+      value: "false"
+    - name: cpd-install-spss
+      value: "false"
+    - name: cpd-wsl-projectname
+      value: "maspredictproject"
+    - name: cpd-wml-url
+      value: "xxx"
+    - name: cpd-admin-url
+      value: "xxx"
+    - name: cpd-admin-username
+      value: "admin"
+    - name: cpd-admin-password
+      value: "xxx"
+
+    # install MAS AI Broker, depending on MAS Core, Manage, IoT and Monitor
+    - name: mas-install-aibroker
+      value: "false"
+    - name: artifactory_username
+      value: "xxx"
+    - name: artifactory_token
+      value: "xxx"
+    - name: mas_airbroker_watsonxai_apikey
+      value: "xxx"
+    - name: mas_airbroker_watsonxai_url
+      value: "https://us-south.ml.cloud.ibm.com"
+    - name: mas_airbroker_watsonxai_project_id
+      value: "xxx"
+    - name: mas_aibroker_channel
+      value: "9.0.x"
+
+  workspaces:
+    - name: ws
+      volumeClaimTemplate:
+        spec:
+          storageClassName: ocs-external-storagecluster-cephfs
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 1Gi
+  timeouts:
+    pipeline: "0"
+    tasks: "24h"

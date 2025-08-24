@@ -1,0 +1,1063 @@
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: mas-devops-deploy
+  namespace: default
+spec:
+  workspaces:
+    - name: ws
+  params:
+    - name: mas-instance-id
+      type: string
+      default: "inst1"
+    - name: mas-workspace-id
+      type: string
+      default: "masdev"
+    - name: mas-install-core
+      type: string
+      description: "install MAS core"
+      default: "true"
+    - name: mas-cp4d-version
+      type: string
+      description: "Supported CP4D version for MAS on OpenShift"
+      default: "5.0.0"
+    - name: mas-install-manage
+      type: string
+      description: "controls whether Maximo Manage and CP4D is installed"
+      default: "true"
+    - name: mas-appws-components
+      type: string
+      description: "controls what appws components are loaded for manage"
+      default: "base=latest"
+    - name: mas-cp4d-install-cognos
+      type: string
+      default: "false"
+    - name: mas-install-optimizer
+      type: string
+      default: "false"
+    - name: mas-install-visualinspection
+      type: string
+      default: "false"
+    - name: run-kafka-fix
+      type: string
+      description: "Fix Strimzi Operator"
+      default: "false"  
+    - name: mas-install-iot
+      type: string
+      description: "install MAS iot"
+      default: "false"
+    - name: mas-install-monitor
+      type: string
+      description: "install MAS Monitor"
+      default: "false"
+    - name: mas-install-predict
+      type: string
+      description: "install MAS Predict"
+      default: "false"
+    - name: install-demo-data
+      type: string
+      description: "install demo data, adds 2+ hours to install time"
+      default: "true"
+    - name: license-file-secret-name
+      description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
+      type: string
+      default: "false"
+    - name: use-letsencrypt-certs
+      description: "use generated letsencrypt certs stored as a secret must specify secret and namespace to locate certs"
+      type: string
+      default: "true"
+    - name: "tlscert-secret"
+      description: "location of TLS cert secret"
+      type: string
+      default: letsencrypt-certs
+    - name: "tlscert-namespace"
+      description: "namespace of TLS cert secret"
+      type: string
+      default: openshift-config
+    - name: ibm-entitlement-key
+      description: "IBM entitlement key. If not set, will use secret manager."
+      type: string
+      default: "false"
+    - name: uds-email
+      description: "Contact Email"
+      type: string
+    - name: uds-firstname
+      description: "Contact first name"
+      type: string
+    - name: uds-lastname
+      description: "Contact last name"
+      type: string
+    - name: rwx-storageclass
+      description: "desired RWX storageclass"
+      type: string
+      default: "ocs-storagecluster-cephfs"
+    - name: rwo-storageclass
+      description: "desired RWO storageclass"
+      type: string
+      default: ocs-storagecluster-cephfs
+    - name: "mas-catalog-version"
+      description: "Maximo operator catalog version. Check https://ibm-mas.github.io/cli/catalogs/"
+      type: string
+      default: v9-250501-amd64
+    - name: mas-channel
+      description: "channel to subscribe to"
+      type: string
+      default: "9.0.x"
+    - name: cpd-platform-services
+      type: string
+      description: "Install CP4D, including WS, WML, OpenScale, Spark in the cluster"
+      default: "true"
+    - name: cpd-install-spss
+      type: string
+      description: "Install SPSS in the cluster"
+      default: "true"
+    - name: cpd-wsl-projectname
+      type: string
+      description: "Watson Studio Project Name"
+      default: "maspredictproject"
+    - name: cpd-wml-url
+      type: string
+      default: "xxx"
+    - name: cpd-admin-url
+      type: string
+      default: "xxx"
+    - name: cpd-admin-username
+      type: string
+      default: "admin"
+    - name: cpd-admin-password
+      type: string
+      default: "xxx"
+    - name: mas-install-aibroker
+      description: "Install AI Broker"
+      type: string
+      default: "false"
+    - name: artifactory_username
+      type: string
+    - name: artifactory_token
+      type: string
+    - name: mas_airbroker_watsonxai_apikey
+      type: string
+    - name: mas_airbroker_watsonxai_url
+      type: string
+      default: "https://us-south.ml.cloud.ibm.com"
+    - name: mas_airbroker_watsonxai_project_id
+      type: string    
+    - name: mas_aibroker_channel
+      type: string 
+      default: "9.0.x"
+
+  finally:
+    - name: update-configmap-failure
+      when:
+        - input: $(tasks.install-mas-core.status)
+          operator: notin
+          values: ["Succeeded"]
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc patch configmap/pipeline-output -p '{"data":{"Status":"Pipeline run failed/skipped to install mas core. See Pipeline run for more details and consider running the pipeline again."}}'
+    - name: update-configmap-success
+      when:
+        - input: $(tasks.install-mas-core.status)
+          operator: in
+          values: ["Succeeded"]
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            # get and echo the pipeline the mas installer created
+            oc patch configmap/pipeline-output -p '{"data":{"Status":"Deployment Pipeline completed to install mas core."}}'
+  tasks:
+    - name: check-container-registry
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            status=$(oc get configs.imageregistry.operator.openshift.io cluster -o jsonpath='{.status.conditions[?(@.type=="Available")].reason}')
+
+            TIMEOUT_SECONDS=300
+            while [[ "$status" != "Ready" ]] && [[ $SECONDS -lt $TIMEOUT_SECONDS ]]; do
+              echo "OpenShift Container Registry is not ready. Current status: $status"
+
+              # Apply the patch commands
+              oc patch config.imageregistry.operator.openshift.io/cluster --type=merge -p '{"spec":{"storage":{"emptyDir":{}}}}'
+              oc patch config.imageregistry.operator.openshift.io/cluster --type=merge -p '{"spec":{"managementState":"Managed"}}'
+
+              # Check status after a short delay to avoid overwhelming the server
+              sleep 10
+
+              # Update status 
+              status=$(oc get configs.imageregistry.operator.openshift.io cluster -o jsonpath='{.status.conditions[?(@.type=="Available")].reason}')
+            done
+
+            if [[ "$status" == "Ready" ]]; then
+              echo "OpenShift Container Registry is ready"
+              exit 0
+            else
+              echo "OpenShift Container Registry failed to become ready after $TIMEOUT_SECONDS seconds." >&2
+              exit 1
+            fi
+    - name: get-ibm-entitlement-key
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: in
+          values: ["false"]
+      taskRef:
+        name: ibmcloud-secrets-manager-get
+        kind: Task
+      retries: 2
+      params:
+        - name: KEY_ID
+          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+    - name: set-ibm-entitlement-key
+      runAfter:
+        - get-ibm-entitlement-key
+      params:
+        - name: ibm-entitlement-key
+          value: "$(params.ibm-entitlement-key)"
+      retries: 3
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: ibm-entitlement-key
+        steps:
+          - name: copy-entitlement-key-to-ws
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              if [ $(params.ibm-entitlement-key) == "false" ]; then
+                echo "Use TechZone provided entitlement key"
+                echo $(tasks.get-ibm-entitlement-key.results.secret-value)
+                echo $(tasks.get-ibm-entitlement-key.results.secret-value) > $(workspaces.ws.path)/ek.dat              
+              else
+                echo "Use user provided entitlement key"
+                echo $(params.ibm-entitlement-key)
+                echo $(params.ibm-entitlement-key) > $(workspaces.ws.path)/ek.dat
+              fi
+              echo "ek.dat created" 
+              exit
+    - name: get-maximo-licensefile
+      retries: 2
+      workspaces:
+        - name: ws
+      params:
+        - name: KEY_ID
+          value: 2d52b201-117a-35ea-71f0-9781a93fbed4
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+        - name: LICENSE_FILE_SECRET_NAME
+          value: "$(params.license-file-secret-name)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: KEY_ID
+          - name: SECRETS_MANAGER_ENDPOINT_URL
+          - name: LICENSE_FILE_SECRET_NAME
+        steps:
+          - name: write-maximo-licensefile
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              #!/usr/bin/env bash
+
+              if [[ $(params.LICENSE_FILE_SECRET_NAME) == "false" ]]; then
+                # Retrieve the IBM Cloud API Key configured in a `deployer` cluster
+                export IBMCLOUD_API_KEY=$(oc get secret ibm-secret -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d)
+                export AUTH_RESPONSE_JSON=$(curl -s -X POST \
+                  "https://iam.cloud.ibm.com/identity/token" \
+                  --header 'Content-Type: application/x-www-form-urlencoded' \
+                  --header 'Accept: application/json' \
+                  --data-urlencode 'grant_type=urn:ibm:params:oauth:grant-type:apikey' \
+                  --data-urlencode "apikey=${IBMCLOUD_API_KEY}")
+                export ACCESS_TOKEN=$(echo $AUTH_RESPONSE_JSON | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
+                export SECRET_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "$(params.SECRETS_MANAGER_ENDPOINT_URL)/api/v2/secrets/$(params.KEY_ID)")
+                echo $SECRET_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$' | base64 -d > $(workspaces.ws.path)/license.dat
+
+              else
+                oc get secret $(params.LICENSE_FILE_SECRET_NAME) -n default -o jsonpath='{.data.licensefile}' | base64 -d | base64 -d > $(workspaces.ws.path)/license.dat
+              fi
+
+              cat $(workspaces.ws.path)/license.dat
+              exit
+    - name: get-tls-certs
+      runAfter:
+        - set-ibm-entitlement-key
+        - get-maximo-licensefile
+      when:
+        - input: "$(params.use-letsencrypt-certs)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      params:
+        - name: TLSCERT_SECRET_LOCATION
+          value: "$(params.tlscert-secret)"
+        - name: TLSCERT_SECRET_NAMESPACE
+          value: "$(params.tlscert-namespace)"
+      workspaces:
+        - name: ws
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: TLSCERT_SECRET_LOCATION
+          - name: TLSCERT_SECRET_NAMESPACE
+        steps:
+          - name: get-tls-certs
+            image: quay.io/congxdev/ibm-pak-ubi:latest
+            script: |
+              ### this is the method to load certs to the mas installer
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/core/
+              wget -qO - https://letsencrypt.org/certs/lets-encrypt-r3.pem > $(workspaces.ws.path)/masconfig/certs/core/ca.crt
+              oc get secret $(params.TLSCERT_SECRET_LOCATION) -n $(params.TLSCERT_SECRET_NAMESPACE) -o jsonpath="{.data['tls\.key']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/core/tls.key
+              oc get secret $(params.TLSCERT_SECRET_LOCATION) -n $(params.TLSCERT_SECRET_NAMESPACE) -o jsonpath="{.data['tls\.crt']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/core/tls.crt
+              ls $(workspaces.ws.path)/masconfig/certs/core/
+              cat $(workspaces.ws.path)/masconfig/certs/core/tls.key
+              cat $(workspaces.ws.path)/masconfig/certs/core/tls.crt
+
+              # copy to app directories
+              echo "copying to app directories..."
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/iot/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/manage/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/monitor/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/add/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/assist/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/optimizer/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/visualinspection/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/predict/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/aibroker/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/iot/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/manage/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/monitor/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/add/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/assist/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/optimizer/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/visualinspection/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/predict/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/aibroker/
+
+              exit
+    - name: install-mas-core
+      when:
+        - input: "$(params.mas-install-core)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - get-tls-certs
+        - check-container-registry
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-install-core
+          value: "$(params.mas-install-core)"
+        - name: uds-email
+          value: "$(params.uds-email)"
+        - name: uds-firstname
+          value: "$(params.uds-firstname)"
+        - name: uds-lastname
+          value: "$(params.uds-lastname)"
+        - name: rwo-storageclass
+          value: "$(params.rwo-storageclass)"
+        - name: rwx-storageclass
+          value: "$(params.rwx-storageclass)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: uds-email
+          - name: uds-firstname
+          - name: uds-lastname
+          - name: rwo-storageclass
+          - name: rwx-storageclass
+          - name: mas-install-core
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              # extract license id from license.dat
+              export SLS_LICENSE_ID=$(cat $(workspaces.ws.path)/license.dat | head -1 | cut -d ' ' -f3)
+              export SLS_LICENSE_FILE=$(workspaces.ws.path)/license.dat
+
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_ WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export MAS_MANUAL_CERT_MGMT=True
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              export DRO_ACTION=install-dro
+              export DRO_CONTACT_EMAIL=$(params.uds-email)
+              export DRO_CONTACT_FIRSTNAME=$(params.uds-firstname)
+              export DRO_CONTACT_LASTNAME=$(params.uds-lastname)
+
+              export PROMETHEUS_ALERTMGR_STORAGE_CLASS=$(params.rwx-storageclass)
+              export PROMETHEUS_STORAGE_CLASS=$(params.rwo-storageclass)
+              export PROMETHEUS_USERWORKLOAD_STORAGE_CLASS=$(params.rwo-storageclass)
+              export GRAFANA_INSTANCE_STORAGE_CLASS=$(params.rwo-storageclass)
+              export MONGODB_STORAGE_CLASS=$(params.rwo-storageclass)
+              export UDS_STORAGE_CLASS=$(params.rwo-storageclass)
+              export DRO_STORAGE_CLASS=$(params.rwo-storageclass)
+
+              #check ai broker public cert
+              #cat ansible-devops/roles/suite_certs/defaults/main.yml
+              wget -qO - "https://raw.githubusercontent.com/zxue/ansible-devops/master/ibm/mas_devops/roles/suite_certs/defaults/main.yml" > ansible-devops/roles/suite_certs/defaults/main.yml
+              #cat ansible-devops/roles/suite_certs/defaults/main.yml
+
+              ansible-playbook ibm.mas_devops.oneclick_core
+
+    - name: install-manage
+      when:
+        - input: "$(params.mas-install-manage)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-mas-core
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-cp4d-version
+          value: "$(params.mas-cp4d-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: install-demo-data
+          value: "$(params.install-demo-data)"
+        - name: mas-cp4d-install-cognos
+          value: "$(params.mas-cp4d-install-cognos)"        
+        - name: rwx-storageclass
+          value: "$(params.rwx-storageclass)"
+        - name: rwo-storageclass
+          value: "$(params.rwo-storageclass)"
+        - name: mas-appws-components
+          value: "$(params.mas-appws-components)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-cp4d-version
+          - name: mas-channel
+          - name: install-demo-data
+          - name: mas-cp4d-install-cognos
+          - name: rwx-storageclass
+          - name: rwo-storageclass
+          - name: mas-appws-components
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=wsapp
+              export MAS_APPWS_BINDINGS_JDBC=workspace-application
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+              
+              export DB2_INSTANCE_NAME=db2wh-manage
+              export DB2_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_DBNAME=BLUDB
+              export DB2_NODE_LABEL=db2wh
+              export DB2_META_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_META_STORAGE_SIZE=100Gi
+              export DB2_META_STORAGE_ACCESSMODE=ReadWriteMany
+              export DB2_DATA_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_DATA_STORAGE_SIZE=100Gi
+              export DB2_DATA_STORAGE_ACCESSMODE=ReadWriteOnce
+              export DB2_BACKUP_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_BACKUP_STORAGE_SIZE=100Gi
+              export DB2_BACKUP_STORAGE_ACCESSMODE=ReadWriteMany
+              export DB2_TEMP_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_TEMP_STORAGE_SIZE=50Gi
+              export DB2_TEMP_STORAGE_ACCESSMODE=ReadWriteOnce
+              #export DB2_CPU_REQUESTS=6000m
+              #export DB2_CPU_LIMITS=10000m
+              #export DB2_MEMORY_REQUESTS=10Gi
+              #export DB2_MEMORY_LIMITS=20Gi
+
+              export MAS_APP_SETTINGS_PERSISTENT_VOLUMES_FLAG=true
+              export MAS_APP_SETTINGS_BASE_LANG=EN
+              export MAS_APP_SETTINGS_SECONDARY_LANGS='DE'
+              export MAS_APP_SETTINGS_SERVER_BUNDLES_SIZE=jms
+              export MAS_MANAGE_ATTACHMENTS_PROVIDER=filestorage
+              export MAS_APP_SETTINGS_ATTACHMENTS_MOUNT_PATH=/DOCLINKS
+              export MANAGE_AIO_FLAG=false
+              export MAS_APP_ID=manage
+
+              export MAS_APPWS_COMPONENTS="$(params.mas-appws-components)"
+
+              export MAS_APP_SETTINGS_DEMODATA=$(params.install-demo-data)
+
+              export CPD_INSTALL_PLATFORM="true"
+              export CPD_INSTALL_COGNOS=$(params.mas-cp4d-install-cognos)
+              export CPD_PRODUCT_VERSION=$(params.mas-cp4d-version) 
+              export CPD_PRIMARY_STORAGE_CLASS=$(params.rwx-storageclass)
+              export CPD_METADATA_STORAGE_CLASS=$(params.rwx-storageclass)
+              export CPD_SERVICE_STORAGE_CLASS=$(params.rwx-storageclass)
+              export CPD_SERVICE_BLOCK_STORAGE_CLASS=$(params.rwo-storageclass)
+
+              ansible-playbook ibm.mas_devops.oneclick_add_manage
+
+    - name: install-optimizer
+      when:
+        - input: "$(params.mas-install-optimizer)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-manage
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-channel
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_ENTITLEMENT_KEY=$IBM_ENTITLEMENT_KEY
+              export MAS_CONFIG_SCOPE=system
+              export MAS_APPWS_BINDINGS_JDBC=system
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              ansible-playbook ibm.mas_devops.oneclick_add_optimizer
+
+    - name: install-visualinspection
+      when:
+        - input: "$(params.mas-install-visualinspection)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-mas-core
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"    
+        - name: rwx-storageclass
+          value: "$(params.rwx-storageclass)"
+        - name: rwo-storageclass
+          value: "$(params.rwo-storageclass)"
+        - name: uds-email
+          value: "$(params.uds-email)"
+        - name: uds-firstname
+          value: "$(params.uds-firstname)"
+        - name: uds-lastname
+          value: "$(params.uds-lastname)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: rwx-storageclass
+          - name: rwo-storageclass
+          - name: uds-email
+          - name: uds-firstname
+          - name: uds-lastname
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=wsapp
+              export MAS_APPWS_BINDINGS_JDBC=workspace-application
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              export DRO_CONTACT_EMAIL=$(params.uds-email)
+              export DRO_CONTACT_FIRSTNAME=$(params.uds-firstname)
+              export DRO_CONTACT_LASTNAME=$(params.uds-lastname)
+              export DRO_NAMESPACE=ibm-dro
+              
+              export GPU_DRIVER_VERSION=565.57.01
+
+              ansible-playbook ibm.mas_devops.oneclick_add_visualinspection
+
+    - name: install-iot
+      when:
+        - input: "$(params.mas-install-iot)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-mas-core
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: rwo-storageclass
+          value: "$(params.rwo-storageclass)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: rwo-storageclass
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=system
+              export MAS_APPWS_BINDINGS_JDBC=system
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+              export DB2_INSTANCE_NAME="db2w-shared"
+
+              export MAS_APP_SETTINGS_IOT_FPL_PVC_STORAGE_CLASS=$(params.rwo-storageclass)
+
+              ansible-playbook ibm.mas_devops.oneclick_add_iot
+    - name: run-kafka-fix
+      when:
+        - input: "$(params.run-kafka-fix)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-mas-core
+      workspaces:
+        - name: ws
+      taskSpec:
+        workspaces:
+          - name: ws
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              NAMESPACE="strimzi"
+              SUBSCRIPTION_NAME="strimzi-kafka-operator"
+              CSV_NAME="strimzi-cluster-operator.v0.46.0"
+              TARGET_CHANNEL="strimzi-0.45.x"
+              MAX_DURATION_SECONDS=$((40 * 60))  # 40 minutes
+              INTERVAL_SECONDS=5
+              ELAPSED_SECONDS=0
+
+              echo "Starting subscription monitor for '$SUBSCRIPTION_NAME' in namespace '$NAMESPACE' (timeout: 40 minutes)..."
+
+              while [ $ELAPSED_SECONDS -lt $MAX_DURATION_SECONDS ]; do
+                if oc get subscriptions.operators.coreos.com "$SUBSCRIPTION_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
+                  CURRENT_CHANNEL=$(oc get subscriptions.operators.coreos.com "$SUBSCRIPTION_NAME" -n "$NAMESPACE" -o jsonpath="{.spec.channel}")
+                  
+                  echo "[$(date +'%H:%M:%S')] Subscription found. Current channel: $CURRENT_CHANNEL"
+                  
+                  if [ "$CURRENT_CHANNEL" == "stable" ]; then
+                    echo "Subscription is using 'stable' channel. Deleting subscription and operator..."
+
+                    # Delete the Subscription
+                    oc delete subscriptions.operators.coreos.com "$SUBSCRIPTION_NAME" -n "$NAMESPACE"
+                    echo "Waiting 5 minutes for the CSV."
+                    sleep 3m
+                    # Delete the Operator CSV (find the installed CSV for this operator)
+                    
+                    if [ -n "$CSV_NAME" ]; then
+                      echo "Deleting ClusterServiceVersion '$CSV_NAME'..."
+                      oc delete csv "$CSV_NAME" -n "$NAMESPACE"
+                    else
+                      echo "No ClusterServiceVersion found for operator '$SUBSCRIPTION_NAME'."
+                    fi
+
+                    # Wait until both are deleted
+                    echo "Waiting for subscription deletion..."
+                    while oc get subscriptions.operators.coreos.com "$SUBSCRIPTION_NAME" -n "$NAMESPACE" > /dev/null 2>&1; do
+                      sleep 2
+                    done
+
+                    if [ -n "$CSV_NAME" ]; then
+                      echo "Waiting for operator (CSV) deletion..."
+                      while oc get csv "$CSV_NAME" -n "$NAMESPACE" > /dev/null 2>&1; do
+                        sleep 2
+                      done
+                    fi
+
+                    echo "Subscription and Operator deleted."
+
+                    # Recreate the Subscription with target channel
+                    echo "Recreating subscription with channel '$TARGET_CHANNEL'..."
+                    cat <<EOF | oc apply -f -
+                                apiVersion: operators.coreos.com/v1alpha1
+                                kind: Subscription
+                                metadata:
+                                  name: $SUBSCRIPTION_NAME
+                                  namespace: $NAMESPACE
+                                spec:
+                                  channel: $TARGET_CHANNEL
+                                  installPlanApproval: Automatic
+                                  name: $SUBSCRIPTION_NAME
+                                  source: community-operators
+                                  sourceNamespace: openshift-marketplace
+              EOF
+
+                    echo "Subscription recreated pointing to channel '$TARGET_CHANNEL'. Monitoring will stop."
+                    exit 0
+                  else
+                    echo "Subscription is not using 'stable' (currently '$CURRENT_CHANNEL'). No action needed."
+                  fi
+                else
+                  echo "[$(date +'%H:%M:%S')] Subscription not found yet. Waiting for creation..."
+                fi
+
+                sleep $INTERVAL_SECONDS
+                ELAPSED_SECONDS=$((ELAPSED_SECONDS + INTERVAL_SECONDS))
+              done
+
+              echo "Timeout reached (40 minutes). Subscription monitor stopped without needing intervention."
+              exit 1
+
+    - name: install-monitor
+      when:
+        - input: "$(params.mas-install-monitor)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-iot
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-channel
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=system
+              export MAS_APPWS_BINDINGS_JDBC=system
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              ansible-playbook ibm.mas_devops.oneclick_add_monitor
+    - name: install-predict
+      when:
+        - input: "$(params.mas-install-predict)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-monitor
+        - install-manage
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-cp4d-version
+          value: "$(params.mas-cp4d-version)"
+        - name: cpd-wsl-projectname
+          value: "$(params.cpd-wsl-projectname)"
+        - name: cpd-platform-services
+          value: "$(params.cpd-platform-services)"
+        - name: cpd-install-spss
+          value: "$(params.cpd-install-spss)"
+        - name: cpd-wml-url
+          value: "$(params.cpd-wml-url)"
+        - name: cpd-admin-url
+          value: "$(params.cpd-admin-url)"
+        - name: cpd-admin-username
+          value: "$(params.cpd-admin-username)"
+        - name: cpd-admin-password
+          value: "$(params.cpd-admin-password)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: mas-cp4d-version
+          - name: cpd-platform-services
+          - name: cpd-install-spss
+          - name: cpd-wsl-projectname
+          - name: cpd-wml-url
+          - name: cpd-admin-url
+          - name: cpd-admin-username
+          - name: cpd-admin-password
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=system
+              export MAS_APPWS_BINDINGS_JDBC=system
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              export CPD_PRODUCT_VERSION=$(params.mas-cp4d-version)
+              export CPD_INSTALL_PLATFORM=$(params.cpd-platform-services)
+              export CPD_INSTALL_WSL=$(params.cpd-platform-services)
+              export CPD_INSTALL_WML=$(params.cpd-platform-services)
+              export CPD_INSTALL_SPARK=$(params.cpd-platform-services)
+              export CPD_INSTALL_OPENSCALE=$(params.cpd-platform-services)
+              export CPD_INSTALL_SPSS=$(params.cpd-install-spss)
+              export CPD_WSL_PROJECT_ID=$(params.cpd-wsl-projectname)
+              export CPD_WML_INSTANCE_ID="openshift"
+              export WML_VERSION=$(params.mas-cp4d-version)
+              
+              # use internal cp4d and services in the OpenShift cluster
+              if [ $(params.cpd-platform-services) == "true" ]; then
+                export CPD_WML_URL="https://$(oc get ZenService "lite-cr"  -o jsonpath="{.status.url}{'\n'}" -n ibm-cpd)"
+              
+              # Use external cp4d and services
+              else
+                export CPD_WML_URL=$(params.cpd-wml-url)
+                export CPD_ADMIN_URL=$(params.cpd-admin-url)
+                export CPD_ADMIN_USERNAME=$(params.cpd-admin-username)
+                export CPD_ADMIN_PASSWORD=$(params.cpd-admin-password)
+              fi
+
+              ansible-playbook ibm.mas_devops.oneclick_add_predict
+    - name: install-mas-aibroker
+      when:
+        - input: "$(params.mas-install-aibroker)"
+          operator: in
+          values: ["true"]
+      retries: 3
+      timeout: "12h"
+      runAfter:
+        - install-mas-core
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: uds-email
+          value: "$(params.uds-email)"
+        - name: artifactory_username
+          value: "$(params.artifactory_username)"
+        - name: artifactory_token
+          value: "$(params.artifactory_token)"
+        - name: mas_airbroker_watsonxai_apikey
+          value: "$(params.mas_airbroker_watsonxai_apikey)"
+        - name: mas_airbroker_watsonxai_url
+          value: "$(params.mas_airbroker_watsonxai_url)"
+        - name: mas_airbroker_watsonxai_project_id
+          value: "$(params.mas_airbroker_watsonxai_project_id)"
+        - name: mas_aibroker_channel
+          value: "$(params.mas_aibroker_channel)"
+
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: uds-email
+          - name: artifactory_username
+          - name: artifactory_token
+          - name: mas_airbroker_watsonxai_apikey
+          - name: mas_airbroker_watsonxai_url
+          - name: mas_airbroker_watsonxai_project_id
+          - name: mas_aibroker_channel
+
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+
+              mkdir -p $(workspaces.ws.path)/masconfig/minio/
+              mkdir -p $(workspaces.ws.path)/masconfig/mariadb/
+
+              # Update storage class "ocs-storagecluster-cephfs" in mariadb-pvc.yml
+              # Update namespace "mas-inst1-aibroker" in maridb-np.yml 
+
+              # download files form github repo or other location
+              export MINIO_FOLDER="https://raw.githubusercontent.com/zxue/deploy-maximo-aibroker/main/minio/"
+              export MARIADB_FOLDER="https://raw.githubusercontent.com/zxue/deploy-maximo-aibroker/main/mariadb/"
+
+              wget -qO - "$MINIO_FOLDER"kustomization.yaml > $(workspaces.ws.path)/masconfig/minio/kustomization.yaml
+              wget -qO - "$MINIO_FOLDER"minio.yaml > $(workspaces.ws.path)/masconfig/minio/minio.yaml
+              wget -qO - "$MINIO_FOLDER"pvc.yaml > $(workspaces.ws.path)/masconfig/minio/pvc.yaml
+
+              wget -qO - "$MARIADB_FOLDER"mariadb-deploy.sh > $(workspaces.ws.path)/masconfig/mariadb/mariadb-deploy.sh
+              wget -qO - "$MARIADB_FOLDER"mariadb-deployment.yml > $(workspaces.ws.path)/masconfig/mariadb/mariadb-deployment.yml
+              wget -qO - "$MARIADB_FOLDER"mariadb-np.yml > $(workspaces.ws.path)/masconfig/mariadb/mariadb-np.yml
+              wget -qO - "$MARIADB_FOLDER"mariadb-ns.yml > $(workspaces.ws.path)/masconfig/mariadb/mariadb-ns.yml
+              wget -qO - "$MARIADB_FOLDER"mariadb-pvc.yml > $(workspaces.ws.path)/masconfig/mariadb/mariadb-pvc.yml
+              wget -qO - "$MARIADB_FOLDER"mariadb-sa.yml > $(workspaces.ws.path)/masconfig/mariadb/mariadb-sa.yml
+              wget -qO - "$MARIADB_FOLDER"mariadb-secret.yml > $(workspaces.ws.path)/masconfig/mariadb/mariadb-secret.yml
+              wget -qO - "$MARIADB_FOLDER"mariadb-service.yml > $(workspaces.ws.path)/masconfig/mariadb/mariadb-service.yml
+
+              # run oc command lines to create minio storage and mariadb
+              cd  $(workspaces.ws.path)/masconfig
+              chmod 777 $(workspaces.ws.path)/masconfig/mariadb/mariadb-deploy.sh
+              oc apply -k minio
+              ./mariadb/mariadb-deploy.sh
+
+              # ARTIFACTORY credentials to access dev images. (This section will be optional once the images are publicly available.)
+              export ARTIFACTORY_USERNAME=$(params.artifactory_username)
+              export ARTIFACTORY_TOKEN=$(params.artifactory_token)
+              export MAS_ICR_CP="docker-na-public.artifactory.swg-devops.com/wiotp-docker-local"
+              export MAS_ICR_CPOPEN="docker-na-public.artifactory.swg-devops.com/wiotp-docker-local/cpopen"
+
+              #MAS
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_ENTITLEMENT_USERNAME=$(params.uds-email)
+              export MAS_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+
+              # MINIO
+              export MAS_AIBROKER_STORAGE_ACCESSKEY="minio123"
+              export MAS_AIBROKER_STORAGE_SECRETKEY="minio123"
+              export MAS_AIBROKER_STORAGE_SSL="false"
+              export MAS_AIBROKER_STORAGE_PROVIDER="minio"
+              #export MAS_AIBROKER_STORAGE_REGION="storage provider region"  
+              export MAS_AIBROKER_STORAGE_PORT="9000"
+              export MAS_AIBROKER_STORAGE_HOST="minio-service.minio.svc.cluster.local"
+              export MAS_AIBROKER_STORAGE_PIPELINES_BUCKET="km-pipelines"
+              export MAS_AIBROKER_STORAGE_TENANTS_BUCKET="km-tenants"
+              export MAS_AIBROKER_STORAGE_TEMPLATES_BUCKET="km-templates"
+
+              # WATSONX AI
+              export MAS_AIBROKER_WATSONXAI_APIKEY=$(params.mas_airbroker_watsonxai_apikey)
+              export MAS_AIBROKER_WATSONXAI_URL=$(params.mas_airbroker_watsonxai_url)
+              export MAS_AIBROKER_WATSONXAI_PROJECT_ID=$(params.mas_airbroker_watsonxai_project_id)
+              export MAS_AIBROKER_CHANNEL=$(params.mas_aibroker_channel)
+
+              # database
+              export MAS_AIBROKER_DB_HOST="mariadb-instance.mariadb.svc.cluster.local"
+              export MAS_AIBROKER_DB_PORT="3306"
+              export MAS_AIBROKER_DB_USER="mariadb"
+              export MAS_AIBROKER_DB_DATABASE="kmpipeline"
+              export MAS_AIBROKER_DB_SECRET_NAME="ds-pipeline-db-instance"
+              export MAS_AIBROKER_DB_SECRET_VALUE="mariadb"
+
+              ansible-playbook ibm.mas_devops.oneclick_add_aibroker

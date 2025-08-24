@@ -1,0 +1,33 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  generateName: pr-mas-devops-
+spec:
+  params:
+    - name: uds-email
+      value: "dev-techzone@ibm.com"
+    - name: uds-firstname
+      value: "TechZone"
+    - name: uds-lastname
+      value: "Developer"
+    - name: mas-install-cp4d-manage
+      value: "true"
+    - name: mas-install-monitor
+      value: "true"
+    - name: mas-install-iot
+      value: "true"
+  workspaces:
+    - name: ws
+      volumeClaimTemplate:
+        spec:
+          accessModes:
+            - ReadWriteMany
+          resources:
+            requests:
+              storage: 1Gi
+  timeouts:
+    pipeline: "0"
+    tasks: "9h"
+  pipelineRef:
+    name: mas-masdevops-deploy

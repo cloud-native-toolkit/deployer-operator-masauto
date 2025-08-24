@@ -1,0 +1,517 @@
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: mas-masdevops-deploy
+  namespace: default
+spec:
+  workspaces:
+    - name: ws
+  params:
+    - name: mas-instance-id
+      type: string
+      default: "inst1"
+    - name: mas-workspace-id
+      type: string
+      default: "masupiwork"
+    - name: mas-install-cp4d-manage
+      type: string
+      description: "controls whether Maximo Manage and CP4D+Cognos is installed"
+      default: "false"
+    - name: mas-install-iot
+      type: string
+      description: "install MAS iot"
+      default: "false"
+    - name: mas-install-monitor
+      type: string
+      description: "install MAS Monitor"
+      default: "false"
+    - name: install-demo-data
+      type: string
+      description: "install demo data, adds 2+ hours to install time"
+      default: "true"
+    - name: license-file-secret-name
+      description: "Store your BYOL license key stored as a base64 encoded arbitrary secret in the kube-system namespace.  provide the name of the secret here.  the defaul is false which means the pipeline will attempt to download a techzone license"
+      type: string
+      default: "false"
+    - name: use-letsencrypt-certs
+      description: "use generated letsencrypt certs stored as a secret in the openshift-config namespace under letsencrypt-certs, if false, will generate self-signed certs"
+      type: string
+      default: "true"
+    - name: ibm-entitlement-key
+      description: "IBM entitlement key. If not set, will use secret manager."
+      type: string
+      default: "false"
+    - name: uds-email
+      description: "Contact Email"
+      type: string
+    - name: uds-firstname
+      description: "Contact first name"
+      type: string
+    - name: uds-lastname
+      description: "Contact last name"
+      type: string
+    - name: rwx-storageclass
+      description: "desired RWX storageclass"
+      type: string
+      default: "ocs-storagecluster-cephfs"
+    - name: "rwo-storageclass"
+      description: "desired RWO storageclass"
+      type: string
+      default: "ocs-storagecluster-cephfs"
+    - name: "tlscert-secret"
+      description: "location of TLS certs in openshift-config namespace"
+      type: string
+      default: "letsencrypt-certs"
+    - name: "mas-catalog-version"
+      description: "Maximo operator catalog version"
+      type: string
+      default: "v9-240625-amd64"
+    - name: "mas-channel"
+      description: "channel to subscribe to"
+      type: string
+      default: "9.0.x"
+  finally:
+    - name: update-configmap-failure
+      when:
+        - input: $(tasks.install-mas.status)
+          operator: notin
+          values: ["Succeeded"]
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            oc patch configmap/pipeline-output -p '{"data":{"Status":"Pipeline run failed. See Pipeline run for more details and consider running the pipeline again."}}'
+    - name: update-configmap-success
+      when:
+        - input: $(tasks.install-mas.status)
+          operator: in
+          values: ["Succeeded"]
+      taskRef:
+        kind: Task
+        name: ibm-pak
+      params:
+        - name: SCRIPT
+          value: |
+            # get and echo the pipeline the mas installer created
+            oc patch configmap/pipeline-output -p '{"data":{"Status":"Deployment Pipeline Running."}}'
+  tasks:
+    - name: get-ibm-entitlement-key
+      taskRef:
+        name: ibmcloud-secrets-manager-get
+        kind: Task
+      params:
+        - name: KEY_ID
+          value: 968d7819-f2c5-7b67-c420-3c6bfd51521e
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+    - name: set-retrieved-entitlement-key
+      when:
+        - input: "$(params.ibm-entitlement-key)"
+          operator: in
+          values: ["false"]
+      runAfter:
+        - get-ibm-entitlement-key
+      params:
+        - name: retrieved-entitlement-key
+          value: $(tasks.get-ibm-entitlement-key.results.secret-value)
+      workspaces:
+        - name: ws
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: retrieved-entitlement-key
+        steps:
+          - name: set-entitlement-key
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              echo $(params.retrieved-entitlement-key)
+              echo $(params.retrieved-entitlement-key) > $(workspaces.ws.path)/ek.dat
+              echo "ek.dat created"
+              exit
+    - name: set-provided-entitlement-key
+      workspaces:
+        - name: ws
+      params:
+        - name: provided-entitlement-key
+          value: "$(params.ibm-entitlement-key)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: provided-entitlement-key
+        steps:
+          - name: set-entitlement
+            image: quay.io/openshift/origin-cli:4.10
+            script: |
+              #!/usr/bin/env bash
+              echo $(params.provided-entitlement-key) > $(workspaces.ws.path)/ek.dat
+              echo "ek.dat created"
+              exit
+    - name: get-maximo-licensefile
+      workspaces:
+        - name: ws
+      runAfter:
+        - set-provided-entitlement-key
+        - set-retrieved-entitlement-key
+      params:
+        - name: KEY_ID
+          value: 5ef410aa-bd48-3339-0096-d2b11e91cb57
+        - name: SECRETS_MANAGER_ENDPOINT_URL
+          value: >-
+            https://afa20521-cd75-4864-843f-e59fd0ffd49d.us-south.secrets-manager.appdomain.cloud
+        - name: LICENSE_FILE_SECRET_NAME
+          value: "$(params.license-file-secret-name)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: KEY_ID
+          - name: SECRETS_MANAGER_ENDPOINT_URL
+          - name: LICENSE_FILE_SECRET_NAME
+        steps:
+          - name: write-maximo-licensefile
+            image: quay.io/openshift/origin-cli:4.12
+            script: |
+              #!/usr/bin/env bash
+
+              if [[ $(params.LICENSE_FILE_SECRET_NAME) == "false" ]]; then
+                # Retrieve the IBM Cloud API Key configured in a `deployer` cluster
+                export IBMCLOUD_API_KEY=$(oc get secret ibm-secret -n kube-system -o jsonpath='{.data.apiKey}' | base64 -d)
+                export AUTH_RESPONSE_JSON=$(curl -s -X POST \
+                  "https://iam.cloud.ibm.com/identity/token" \
+                  --header 'Content-Type: application/x-www-form-urlencoded' \
+                  --header 'Accept: application/json' \
+                  --data-urlencode 'grant_type=urn:ibm:params:oauth:grant-type:apikey' \
+                  --data-urlencode "apikey=${IBMCLOUD_API_KEY}")
+                export ACCESS_TOKEN=$(echo $AUTH_RESPONSE_JSON | grep -o '"access_token":"[^"]*' | grep -o '[^"]*$')
+                export SECRET_JSON=$(curl -s -X GET --location --header "Authorization: Bearer ${ACCESS_TOKEN}" --header "Accept: application/json" "$(params.SECRETS_MANAGER_ENDPOINT_URL)/api/v2/secrets/$(params.KEY_ID)")
+                echo $SECRET_JSON |  grep -o '"payload":"[^"]*' | grep -o '[^"]*$' | base64 -d > $(workspaces.ws.path)/license.dat
+
+              else
+                oc get secret $(params.LICENSE_FILE_SECRET_NAME) -n default -o jsonpath='{.data.licensefile}' | base64 -d | base64 -d > $(workspaces.ws.path)/license.dat
+              fi
+
+              cat $(workspaces.ws.path)/license.dat
+    - name: get-tls-certs
+      when:
+        - input: "$(params.use-letsencrypt-certs)"
+          operator: in
+          values: ["true"]
+      retries: 2
+      runAfter:
+        - get-maximo-licensefile
+      params:
+        - name: TLSCERT_SECRET_LOCATION
+          value: "$(params.tlscert-secret)"
+      workspaces:
+        - name: ws
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: TLSCERT_SECRET_LOCATION
+        steps:
+          - name: get-tls-certs
+            image: quay.io/congxdev/ibm-pak-ubi:latest
+            script: |
+              ### this is the method to load certs to the mas installer
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/core/
+              wget -qO - https://letsencrypt.org/certs/lets-encrypt-r3.pem > $(workspaces.ws.path)/masconfig/certs/core/ca.crt
+              oc get secret $(params.TLSCERT_SECRET_LOCATION) -n openshift-config -o jsonpath="{.data['tls\.key']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/core/tls.key
+              oc get secret $(params.TLSCERT_SECRET_LOCATION) -n openshift-config -o jsonpath="{.data['tls\.crt']}" | base64 -d > $(workspaces.ws.path)/masconfig/certs/core/tls.crt
+              ls $(workspaces.ws.path)/masconfig/certs/core/
+              cat $(workspaces.ws.path)/masconfig/certs/core/tls.key
+              cat $(workspaces.ws.path)/masconfig/certs/core/tls.crt
+
+              # copy to app directories
+              echo "copying to app directories..."
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/iot/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/manage/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/monitor/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/add/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/assist/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/optimizer/
+              mkdir -p $(workspaces.ws.path)/masconfig/certs/visualinspection/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/iot/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/manage/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/monitor/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/add/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/assist/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/optimizer/
+              cp $(workspaces.ws.path)/masconfig/certs/core/* $(workspaces.ws.path)/masconfig/certs/visualinspection/
+
+              # copy letsencrypt-certs secret to the name where maximo is expecting to find it.
+              if oc get secret -n openshift-ingress router-certs-default; then
+                echo "router-certs-default secret already exists"
+              else
+                oc get secret letsencrypt-certs -n openshift-ingress -o yaml | yq '.metadata["name"]="router-certs-default"' | oc apply -n openshift-ingress -f -
+              fi
+    - name: install-mas
+      retries: 2
+      timeout: "6h"
+      runAfter:
+        - get-tls-certs
+        - get-maximo-licensefile
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: uds-email
+          value: "$(params.uds-email)"
+        - name: uds-firstname
+          value: "$(params.uds-firstname)"
+        - name: uds-lastname
+          value: "$(params.uds-lastname)"
+        - name: rwo-storageclass
+          value: "$(params.rwo-storageclass)"
+        - name: rwx-storageclass
+          value: "$(params.rwx-storageclass)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: uds-email
+          - name: uds-firstname
+          - name: uds-lastname
+          - name: rwo-storageclass
+          - name: rwx-storageclass
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              # extract license id from license.dat
+              export SLS_LICENSE_ID=$(cat $(workspaces.ws.path)/license.dat | head -1 | cut -d ' ' -f3)
+              export SLS_LICENSE_FILE=$(workspaces.ws.path)/license.dat
+
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              #export MAS_ WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export MAS_MANUAL_CERT_MGMT=True
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              export DRO_ACTION=install-dro
+              export BAS_PROVIDER=DRO
+              export DRO_CONTACT_EMAIL=$(params.uds-email)
+              export DRO_CONTACT_FIRSTNAME=$(params.uds-firstname)
+              export DRO_CONTACT_LASTNAME=$(params.uds-lastname)
+
+              export PROMETHEUS_ALERTMGR_STORAGE_CLASS=$(params.rwx-storageclass)
+              export PROMETHEUS_STORAGE_CLASS=$(params.rwo-storageclass)
+              export PROMETHEUS_USERWORKLOAD_STORAGE_CLASS=$(params.rwo-storageclass)
+              export GRAFANA_INSTANCE_STORAGE_CLASS=$(params.rwo-storageclass)
+              export MONGODB_STORAGE_CLASS=$(params.rwo-storageclass)
+              export UDS_STORAGE_CLASS=$(params.rwo-storageclass)
+              export DRO_STORAGE_CLASS=$(params.rwo-storageclass)
+
+              ansible-playbook ibm.mas_devops.oneclick_core
+    - name: install-cp4d-manage
+      when:
+        - input: "$(params.mas-install-cp4d-manage)"
+          operator: in
+          values: ["true"]
+      retries: 2
+      timeout: "6h"
+      runAfter:
+        - install-mas
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: install-demo-data
+          value: "$(params.install-demo-data)"
+        - name: rwx-storageclass
+          value: "$(params.rwx-storageclass)"
+        - name: rwo-storageclass
+          value: "$(params.rwo-storageclass)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: install-demo-data
+          - name: rwx-storageclass
+          - name: rwo-storageclass
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              #export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=wsapp
+              export MAS_APPWS_BINDINGS_JDBC=workspace-application
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              export DB2_INSTANCE_NAME=db2wh-manage
+              export DB2_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_DBNAME=BLUDB
+              export DB2_NODE_LABEL=db2wh
+              export DB2_META_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_META_STORAGE_SIZE=100Gi
+              export DB2_META_STORAGE_ACCESSMODE=ReadWriteMany
+              export DB2_DATA_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_DATA_STORAGE_SIZE=100Gi
+              export DB2_DATA_STORAGE_ACCESSMODE=ReadWriteOnce
+              xport DB2_BACKUP_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_BACKUP_STORAGE_SIZE=100Gi
+              export DB2_BACKUP_STORAGE_ACCESSMODE=ReadWriteMany
+              export DB2_TEMP_STORAGE_CLASS=$(params.rwx-storageclass)
+              export DB2_TEMP_STORAGE_SIZE=50Gi
+              export DB2_TEMP_STORAGE_ACCESSMODE=ReadWriteOnce
+              #export DB2_CPU_REQUESTS=6000m
+              #export DB2_CPU_LIMITS=10000m
+              #export DB2_MEMORY_REQUESTS=10Gi
+              #export DB2_MEMORY_LIMITS=20Gi
+
+              export MAS_APP_SETTINGS_PERSISTENT_VOLUMES_FLAG=true
+              export MAS_APP_SETTINGS_BASE_LANG=EN
+              export MAS_APP_SETTINGS_SECONDARY_LANGS='DE'
+              export MAS_APP_SETTINGS_SERVER_BUNDLES_SIZE=jms
+              export MAS_MANAGE_ATTACHMENTS_PROVIDER=filestorage
+              export MAS_APP_SETTINGS_ATTACHMENTS_MOUNT_PATH=/DOCLINKS
+              export MANAGE_AIO_FLAG=false
+              export MAS_APP_ID=manage
+
+              #export MAS_APPWS_COMPONENTS="base=latest,health=latest"
+              export MAS_APP_SETTINGS_DEMODATA=$(params.install-demo-data)
+
+              export CPD_INSTALL_PLATFORM="true"
+              export CPD_INSTALL_COGNOS="true"
+              export CPD_PRODUCT_VERSION="4.8.0"
+              export CPD_PRIMARY_STORAGE_CLASS=$(params.rwx-storageclass)
+              export CPD_METADATA_STORAGE_CLASS=$(params.rwx-storageclass)
+              export CPD_SERVICE_STORAGE_CLASS=$(params.rwx-storageclass)
+              export CPD_SERVICE_BLOCK_STORAGE_CLASS=$(params.rwo-storageclass)
+
+              ansible-playbook ibm.mas_devops.oneclick_add_manage
+    - name: install-iot
+      when:
+        - input: "$(params.mas-install-iot)"
+          operator: in
+          values: ["true"]
+      retries: 2
+      timeout: "6h"
+      runAfter:
+        - install-mas
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: rwo-storageclass
+          value: "$(params.rwo-storageclass)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-catalog-version
+          - name: mas-channel
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: rwo-storageclass
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              #export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=system
+              export MAS_APPWS_BINDINGS_JDBC=system
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              export MAS_APP_SETTINGS_IOT_FPL_PVC_STORAGE_CLASS=$(params.rwo-storageclass)
+
+              ansible-playbook ibm.mas_devops.oneclick_add_iot
+    - name: install-monitor
+      when:
+        - input: "$(params.mas-install-monitor)"
+          operator: in
+          values: ["true"]
+      retries: 2
+      timeout: "6h"
+      runAfter:
+        - install-iot
+      workspaces:
+        - name: ws
+      params:
+        - name: mas-instance-id
+          value: "$(params.mas-instance-id)"
+        - name: mas-workspace-id
+          value: "$(params.mas-workspace-id)"
+        - name: mas-catalog-version
+          value: "$(params.mas-catalog-version)"
+        - name: mas-channel
+          value: "$(params.mas-channel)"
+      taskSpec:
+        workspaces:
+          - name: ws
+        params:
+          - name: mas-instance-id
+          - name: mas-workspace-id
+          - name: mas-catalog-version
+          - name: mas-channel
+        steps:
+          - name: run-mas-cli
+            image: quay.io/ibmmas/cli:latest
+            script: |
+              #!/usr/bin/env bash
+              export MAS_INSTANCE_ID=$(params.mas-instance-id)
+              export MAS_WORKSPACE_ID=$(params.mas-workspace-id)
+              export MAS_CONFIG_DIR=$(workspaces.ws.path)/masconfig
+              export IBM_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export DB2_ENTITLEMENT_KEY=$(cat $(workspaces.ws.path)/ek.dat)
+              export MAS_CONFIG_SCOPE=system
+              export MAS_APPWS_BINDINGS_JDBC=system
+              export MAS_CATALOG_VERSION=$(params.mas-catalog-version)
+              export MAS_CHANNEL=$(params.mas-channel)
+
+              ansible-playbook ibm.mas_devops.oneclick_add_monitor
+
+
+
+
